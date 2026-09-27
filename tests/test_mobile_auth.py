@@ -726,6 +726,51 @@ def test_mobile_timetable_returns_personalized_events(client, db):
     assert all(item["group_name"] != "1o2" for item in payload["events"])
 
 
+def test_mobile_timetable_supports_etag_without_using_generated_at(client, db, monkeypatch):
+    semester = db.semester(
+        name="Current 2026",
+        start="2026-01-01",
+        end="2026-12-31",
+    )
+    db.student("student-etag", "129/1997", "Et", "Ag")
+    token = _mobile_login(
+        client,
+        username="student-etag",
+        device_id="device-timetable-etag",
+    ).get_json()["token"]
+
+    first = client.get(
+        "/mobile/timetable",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    assert first.headers["ETag"]
+    assert first.headers["Cache-Control"] == "private, max-age=0, must-revalidate"
+    etag = first.headers["ETag"]
+
+    def unexpected_full_timetable_query(*args, **kwargs):
+        raise AssertionError("304 response should not load the full timetable")
+
+    monkeypatch.setattr(
+        "mobile_auth.student_enrollments_for_student",
+        unexpected_full_timetable_query,
+    )
+    monkeypatch.setattr(
+        "mobile_auth.student_timetable_events_for_student",
+        unexpected_full_timetable_query,
+    )
+
+    second = client.get(
+        "/mobile/timetable",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "If-None-Match": etag,
+        },
+    )
+    assert second.status_code == 304
+    assert second.headers["ETag"] == etag
+
+
 def test_mobile_exam_schedule_returns_personalized_exams(client, db):
     semester = db.semester(
         name="2026/27. јесењи",

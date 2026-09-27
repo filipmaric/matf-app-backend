@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import db as mydb
 from semester_utils import parse_semester_display_name
 from lib.timetable_common import find_session_ids, get_latest_semester_id, get_room_id, parse_line
 
@@ -257,6 +258,7 @@ def main(argv=None):
     meeting_counts: dict[tuple, int] = {}
 
     try:
+        mydb.ensure_timetable_revision_schema(conn)
         with conn:
             cur = conn.cursor()
             semester_id = resolve_semester_id(cur, args.semester)

@@ -12,7 +12,7 @@ from urllib.error import URLError
 from urllib.request import Request
 from urllib.request import urlopen
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, make_response, request
 
 from auth import RATE_LIMITS, enforce_rate_limit, login_rate_limit_key, service_required, student_radius_auth
 from config import (
@@ -55,15 +55,33 @@ from db import (
     mobile_auth_revoke_session,
     mobile_auth_touch_session,
     student_enrollments_for_student,
+    student_enrollment_revision,
     student_identity_for_username,
     student_exam_schedule_for_student,
     student_notifications_unread_count,
     student_timetable_events_for_student,
+    timetable_revision_for_semester,
 )
 from semester import current_semester_id, semester_by_id
 
 
 bp = Blueprint("mobile_auth", __name__)
+
+
+def _timetable_response(payload, etag):
+    """Return a timetable response using a cheap metadata-based ETag."""
+    if request.headers.get("If-None-Match") == etag:
+        response = make_response("", 304)
+    else:
+        response = make_response(jsonify(payload))
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+    return response
+
+
+def _timetable_etag(semester_id, timetable_revision, enrollment_revision):
+    """Build an ETag from independent timetable and enrollment revisions."""
+    return f'"semester-{semester_id}-timetable-{timetable_revision}-enrollments-{enrollment_revision}"'
 
 
 class HypatiaExamApplicationError(RuntimeError):
@@ -764,14 +782,16 @@ def timetable():
     if semester_id is not None and semester is None:
         return jsonify({"error": "semester_not_found"}), 404
     if resolved_semester_id is None:
-        return jsonify(
+        etag = _timetable_etag("none", 0, 0)
+        return _timetable_response(
             {
                 "student": None,
                 "semester": None,
                 "enrollments": [],
                 "events": [],
                 "generated_at": _utcnow().isoformat(),
-            }
+            },
+            etag,
         )
 
     user = mobile_auth_get_user_by_id(session["user_id"])
@@ -779,6 +799,14 @@ def timetable():
     student = student_identity_for_username(data_username)
     if student["student_name"] is None and student["student_index"] is None:
         return jsonify({"error": "student_not_found"}), 404
+
+    etag = _timetable_etag(
+        resolved_semester_id,
+        timetable_revision_for_semester(resolved_semester_id),
+        student_enrollment_revision(data_username, resolved_semester_id),
+    )
+    if request.headers.get("If-None-Match") == etag:
+        return _timetable_response({}, etag)
 
     enrollments = [
         {
@@ -816,14 +844,15 @@ def timetable():
         }
         for row in student_timetable_events_for_student(data_username, resolved_semester_id)
     ]
-    return jsonify(
+    return _timetable_response(
         {
             "student": student,
             "semester": semester,
             "enrollments": enrollments,
             "events": events,
             "generated_at": _utcnow().isoformat(),
-        }
+        },
+        etag,
     )
 
 

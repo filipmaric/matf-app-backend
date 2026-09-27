@@ -494,6 +494,217 @@ def _ensure_student_enrollment_schema(conn):
     conn.commit()
 
 
+def _ensure_timetable_revision_schema(conn):
+    """Create independent revisions for timetable and student enrollments."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS timetable_revisions (
+            semester_id INTEGER PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS student_enrollment_revisions (
+            student_username TEXT NOT NULL,
+            semester_id INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY(student_username, semester_id),
+            FOREIGN KEY(student_username) REFERENCES students(username) ON DELETE CASCADE,
+            FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+        );
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_course_session_insert
+        AFTER INSERT ON course_sessions
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id) VALUES (NEW.semester_id);
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = NEW.semester_id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_course_session_update
+        AFTER UPDATE ON course_sessions
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id) VALUES (OLD.semester_id);
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = OLD.semester_id;
+            INSERT OR IGNORE INTO timetable_revisions (semester_id) VALUES (NEW.semester_id);
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = NEW.semester_id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_course_session_delete
+        AFTER DELETE ON course_sessions
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id) VALUES (OLD.semester_id);
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = OLD.semester_id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_weekly_session_insert
+        AFTER INSERT ON weekly_sessions
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = NEW.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = NEW.session_id
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_weekly_session_update
+        AFTER UPDATE ON weekly_sessions
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = OLD.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = OLD.session_id
+            );
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = NEW.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = NEW.session_id
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_weekly_session_delete
+        AFTER DELETE ON weekly_sessions
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = OLD.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = OLD.session_id
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_session_group_insert
+        AFTER INSERT ON session_groups
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = NEW.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = NEW.session_id
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_session_group_update
+        AFTER UPDATE ON session_groups
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = OLD.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = OLD.session_id
+            );
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = NEW.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = NEW.session_id
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_timetable_revision_session_group_delete
+        AFTER DELETE ON session_groups
+        BEGIN
+            INSERT OR IGNORE INTO timetable_revisions (semester_id)
+            SELECT semester_id FROM course_sessions WHERE id = OLD.session_id;
+            UPDATE timetable_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = (
+                SELECT semester_id FROM course_sessions WHERE id = OLD.session_id
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_student_enrollment_revision_insert
+        AFTER INSERT ON student_enrollments
+        BEGIN
+            INSERT OR IGNORE INTO student_enrollment_revisions
+                (student_username, semester_id)
+            VALUES (NEW.student_username, NEW.semester_id);
+            UPDATE student_enrollment_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE student_username = NEW.student_username
+              AND semester_id = NEW.semester_id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_student_enrollment_revision_update
+        AFTER UPDATE ON student_enrollments
+        BEGIN
+            INSERT OR IGNORE INTO student_enrollment_revisions
+                (student_username, semester_id)
+            VALUES (OLD.student_username, OLD.semester_id);
+            UPDATE student_enrollment_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE student_username = OLD.student_username
+              AND semester_id = OLD.semester_id;
+            INSERT OR IGNORE INTO student_enrollment_revisions
+                (student_username, semester_id)
+            VALUES (NEW.student_username, NEW.semester_id);
+            UPDATE student_enrollment_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE student_username = NEW.student_username
+              AND semester_id = NEW.semester_id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_student_enrollment_revision_delete
+        AFTER DELETE ON student_enrollments
+        BEGIN
+            INSERT OR IGNORE INTO student_enrollment_revisions
+                (student_username, semester_id)
+            VALUES (OLD.student_username, OLD.semester_id);
+            UPDATE student_enrollment_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE student_username = OLD.student_username
+              AND semester_id = OLD.semester_id;
+        END;
+        """
+    )
+    # These tables contain values embedded in the timetable response.  Their
+    # changes are uncommon and can affect more than one semester, so invalidate
+    # every known semester rather than maintaining a more fragile dependency map.
+    for table_name in (
+        "courses",
+        "course_subjects",
+        "subjects",
+        "teachers",
+        "groups",
+        "rooms",
+        "building_locations",
+    ):
+        for event in ("INSERT", "UPDATE", "DELETE"):
+            trigger_name = f"trg_timetable_revision_{table_name}_{event.lower()}"
+            conn.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS {trigger_name}
+                AFTER {event} ON {table_name}
+                BEGIN
+                    INSERT OR IGNORE INTO timetable_revisions (semester_id)
+                    SELECT id FROM semesters;
+                    UPDATE timetable_revisions
+                    SET revision = revision + 1, updated_at = datetime('now');
+                END
+                """
+            )
+    conn.commit()
+
+
 def _ensure_exam_schedule_schema(conn):
     """Create the imported exam schedule table if it is missing."""
     _ensure_building_locations_schema(conn)
@@ -817,6 +1028,7 @@ def _ensure_extra_schemas(conn):
     _ensure_mobile_device_schema(conn)
     _ensure_student_directory_schema(conn)
     _ensure_student_enrollment_schema(conn)
+    _ensure_timetable_revision_schema(conn)
     _ensure_exam_schedule_schema(conn)
     _ensure_exam_term_schema(conn)
     _ensure_exam_application_schema(conn)
@@ -839,6 +1051,11 @@ def ensure_calendar_schema(conn):
 def ensure_student_enrollment_schema(conn):
     """Public helper used by import scripts to ensure student enrollments exist."""
     _ensure_student_enrollment_schema(conn)
+
+
+def ensure_timetable_revision_schema(conn):
+    """Public helper used by standalone import scripts."""
+    _ensure_timetable_revision_schema(conn)
 
 
 def ensure_exam_schedule_schema(conn):
@@ -1673,6 +1890,30 @@ def student_enrollments_for_student(student_username, semester_id=None):
         """,
         (student_username, semester_id),
     )
+
+
+def timetable_revision_for_semester(semester_id):
+    """Return the cheap revision number for one semester's timetable."""
+    row = query_db(
+        "SELECT revision FROM timetable_revisions WHERE semester_id = ?",
+        (semester_id,),
+        one=True,
+    )
+    return int(row["revision"]) if row else 0
+
+
+def student_enrollment_revision(student_username, semester_id):
+    """Return the revision number for one student's semester enrollments."""
+    row = query_db(
+        """
+        SELECT revision
+        FROM student_enrollment_revisions
+        WHERE student_username = ? AND semester_id = ?
+        """,
+        (student_username, semester_id),
+        one=True,
+    )
+    return int(row["revision"]) if row else 0
 
 
 def student_timetable_events_for_student(student_username, semester_id):

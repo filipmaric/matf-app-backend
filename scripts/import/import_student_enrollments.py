@@ -206,6 +206,7 @@ def main(argv=None):
     try:
         with conn:
             mydb.ensure_student_enrollment_schema(conn)
+            mydb.ensure_timetable_revision_schema(conn)
             cur = conn.cursor()
 
             raw_rows = _load_desired_rows(csv_path)
