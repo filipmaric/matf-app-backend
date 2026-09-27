@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import getpass
 import os
+import socket
 import sys
+from pathlib import Path
 
 import pyrad.packet
 from pyrad.client import Client
@@ -45,12 +47,20 @@ def check_radius(
     password,
     env_file_values,
     label,
+    verbose=False,
 ):
     """Send one RADIUS authentication request and return a process exit code."""
     backend = env_value(auth_mode_name, env_file_values, "mock").lower()
     server = env_value(server_name, env_file_values)
     secret = env_value(secret_name, env_file_values)
     dictionary_path = env_value(dictionary_name, env_file_values)
+
+    if verbose:
+        print(f"Environment file values loaded for {label} authentication.")
+        print(f"  {auth_mode_name}={backend!r}")
+        print(f"  {server_name}={server!r}")
+        print(f"  {secret_name}=<set, {len(secret or '')} characters>")
+        print(f"  {dictionary_name}={dictionary_path!r}")
 
     missing = [
         name
@@ -69,14 +79,35 @@ def check_radius(
         print(f"{auth_mode_name} is set to {backend!r}, not 'radius'.", file=sys.stderr)
         return 2
 
+    dictionary = Path(dictionary_path)
+    if verbose:
+        print(
+            f"  dictionary exists={dictionary.exists()} "
+            f"readable={os.access(dictionary, os.R_OK)}"
+        )
+        try:
+            addresses = sorted(
+                {item[4][0] for item in socket.getaddrinfo(server, 1812, type=socket.SOCK_DGRAM)}
+            )
+            print(f"  DNS addresses for {server}: {', '.join(addresses)}")
+        except OSError as exc:
+            print(f"  DNS lookup failed: {type(exc).__name__}: {exc}")
+
     if password is None:
         password = getpass.getpass(f"{label} password: ")
 
-    client = Client(
-        server=server,
-        secret=secret.encode("utf-8"),
-        dict=Dictionary(dictionary_path),
-    )
+    try:
+        client = Client(
+            server=server,
+            secret=secret.encode("utf-8"),
+            dict=Dictionary(dictionary_path),
+        )
+    except Exception as exc:
+        print(
+            f"Could not initialize RADIUS client: {type(exc).__name__}: {exc!r}",
+            file=sys.stderr,
+        )
+        return 1
     request = client.CreateAuthPacket(
         code=pyrad.packet.AccessRequest,
         User_Name=username,
@@ -86,7 +117,16 @@ def check_radius(
     try:
         reply = client.SendPacket(request)
     except Exception as exc:
-        print(f"RADIUS request failed: {exc}", file=sys.stderr)
+        print(
+            f"RADIUS request failed: {type(exc).__name__}: {exc!r}",
+            file=sys.stderr,
+        )
+        if verbose:
+            print(
+                "Check DNS, UDP port 1812, firewall rules, shared secret, "
+                "and whether this client IP is registered in the RADIUS server.",
+                file=sys.stderr,
+            )
         return 1
 
     if reply.code == pyrad.packet.AccessAccept:

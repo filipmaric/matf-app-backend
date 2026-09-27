@@ -18,6 +18,7 @@ def main():
         help="Path to the matf.env file",
     )
     parser.add_argument("--username", required=True, help="Teacher username")
+    parser.add_argument("--verbose", action="store_true", help="Print diagnostic details")
     parser.add_argument(
         "--password",
         help="Teacher password. If omitted, the script will prompt for it.",
@@ -32,6 +33,7 @@ def main():
         password=args.password,
         env_file_values=load_env_file(args.env_file),
         label="Teacher",
+        verbose=args.verbose,
     )
 
 
