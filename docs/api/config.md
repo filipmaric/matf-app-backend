@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `config`
 
 This module centralizes environment-backed settings and filesystem paths.

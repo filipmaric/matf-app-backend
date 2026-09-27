@@ -1,14 +1,15 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
 import { CellRenderers, attachDragSensor } from './cellRenderers.js';
 import { formatDateDDMMYYYY } from './util.js';
 
 ////////////////////////////////////////////////////////////////////////////////
-// podaci o sesiji i UI elemente login/logout
+// Session data and login/logout UI elements
 ////////////////////////////////////////////////////////////////////////////////
 const AuthManager = {
     username: "",
     isAdmin: false,
-    elements: {}, // reference na UI elemente
+    elements: {}, // UI element references
 
     init(elements) {
         this.elements = elements;
@@ -33,7 +34,7 @@ const AuthManager = {
 
     async updateUI() {
         try {
-            const data = await API.whoami();
+            const data = await API.me();
             if (data.logged_in) {
                 this.username = data.username;
                 this.isAdmin = await API.isAdmin(this.username);
@@ -85,7 +86,7 @@ const AuthManager = {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// prikaz tabela sa rezervacijama
+// Reservation table view
 ////////////////////////////////////////////////////////////////////////////////
 const TableManager = {
     container: null,
@@ -111,7 +112,9 @@ const TableManager = {
     },
 
     getDayLabel(data) {
-        return data.is_working ? ("распоред часова: " + this.getDayName(data.week_day)) : "ненаставни дан";
+        return ["teaching", "makeup"].includes(data.kind)
+            ? ("распоред часова: " + this.getDayName(data.week_day))
+            : (data.kind === "exam" ? "испитни дан" : data.kind === "colloquium" ? "дан за колоквијуме" : "ненаставни дан");
     },
 
     getWeekDay(date) {
@@ -119,10 +122,10 @@ const TableManager = {
     },
 
     renderHeader(data) {
-	// .date, this.getDayLabel(data)
+        // .date, this.getDayLabel(data)
         const h2 = document.createElement("h2");
         h2.textContent = `Заузеће сала на дан ${this.getDayName(this.getWeekDay(data.date))}, ${formatDateDDMMYYYY(data.date)}`;
-	if (!data.is_working || (data.is_working && data.week_day != this.getWeekDay(data.date)))
+	if (!["teaching", "makeup"].includes(data.kind) || data.week_day != this.getWeekDay(data.date))
 	    h2.textContent += ` (${this.getDayLabel(data)})`;
         this.container.appendChild(h2);
     },
@@ -135,6 +138,7 @@ const TableManager = {
 
         for (const [location, locationRooms] of Object.entries(roomsByLocation)) {
             const h3 = document.createElement("h3");
+            h3.classList.add("occupancy-location-title");
             h3.textContent = location;
             this.container.appendChild(h3);
             this.container.appendChild(this.createTable(locationRooms, data));
@@ -192,13 +196,13 @@ const TableManager = {
 
         let contentKey = '';
 	if (!cellData) {
-	    // Ako je prazno, ključ je i dalje jedinstven za tu ćeliju
+	    // If it is empty, the key is still unique for that cell
 	    contentKey = `empty-${room_id}-${hour}`;
 	} else if (cellData.type === 'weekly') {
-	    // Za nedeljne koristimo ceo objekat (ili npr. weekly_session_id)
+	    // For weekly entries, use the full object (or e.g. weekly_session_id)
 	    contentKey = JSON.stringify(cellData);
 	} else {
-	    // ZA REZERVACIJE: Uzimamo samo ono što ih čini "istim" u nizu
+	    // FOR RESERVATIONS: take only what makes them "the same" in a sequence
 	    contentKey = `res-${cellData.username}-${cellData.description}`;
 	}
 
@@ -226,11 +230,11 @@ const TableManager = {
             },
             onDelete: async (id) => {
                 await API.deleteReservation(id);
-                App.refresh(); // globalno osvežavanje celog prikaza
+                App.refresh(); // global refresh of the entire view
             },
             onToggleWeekly: async (id, date) => {
                 await API.toggleWeekly(id, date);
-                App.refresh(); // globalno osvežavanje celog prikaza
+                App.refresh(); // global refresh of the entire view
             }
         };
 
@@ -244,6 +248,7 @@ const TableManager = {
     groupRoomsByLocation(rooms) {
         const locations = {};
         Object.entries(rooms).forEach(([id, room]) => {
+            if (room.type === "teacher_office") return;
             const loc = room.location || "Непозната локација";
             if (!locations[loc]) locations[loc] = {};
             locations[loc][id] = room;
@@ -253,7 +258,7 @@ const TableManager = {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// akcije kojima korisnik mišem rezerviše salu
+// Actions for reserving a room with the mouse
 ////////////////////////////////////////////////////////////////////////////////
 const DragAndDropManager = {
     isDragging: false,
@@ -352,7 +357,7 @@ const App = {
     refreshTimer: null,
 
     async init() {
-        // inicijalizacija AuthManagera sa UI elementima
+        // Initialize AuthManager with the UI elements
         AuthManager.init({
             loginForm: document.getElementById("login-form"),
             usernameInput: document.getElementById("username"),
@@ -362,10 +367,10 @@ const App = {
             myReservationsWrap: document.getElementById("my-reservations-wrap")
         });
 
-	// prikazujemo odgovarajuće elemente za login/logout
+	// Show the appropriate login/logout elements
         await AuthManager.updateUI();
 
-	// postavljamo današnji datum
+	// Set today's date
         const dateInput = document.getElementById("date-input");
         const params = new URLSearchParams(window.location.search);
         const date = params.get('date');
@@ -374,34 +379,34 @@ const App = {
            console.log(date);
         } if (!dateInput.value) dateInput.value = new Date().toISOString().split("T")[0];
 
-        // učitavanje soba
+        // Load rooms
         const rooms = await API.getRooms();
 
-	// inicijalizacija menažera
+	// Initialize managers
         TableManager.init(document.getElementById("occupancy"), rooms);
         DragAndDropManager.init(document.getElementById("occupancy"), rooms);
 
-	// povezujemo UI sa događajima
+	// Wire up UI events
         this.setupEvents();
 
-        // osvežavamo prikaz tabele
+        // Refresh the table view
         this.refresh();
-        // Povremeno osvežavamo prikaz da bi se QR dugme pojavilo/nestalo
-        // kada čas uđe u dozvoljeni vremenski prozor.
+        // Periodically refresh the view so the QR button appears/disappears
+        // when a class enters the allowed time window.
         this.refreshTimer = setInterval(() => {
             this.refresh().catch((err) => console.error("Auto-refresh error:", err));
         }, 5 * 60 * 1000);
     },
 
-    // učitavamo i prikazujemo podatke za odabrani datum
+    // Load and display data for the selected date
     async refresh() {
-	// datum za koji se prikazuju podaci
+	// Date for which the data is displayed
         const date = document.getElementById("date-input").value;
-	// učitavamo podatke i prikazujemo ih
+	// Load the data and display it
         const data = await API.getOccupancy(date);
         TableManager.render(data);
         this.scrollToRequestedSlot();
-	// ako je korisnik ulogovan, uključujemo rezervacije pomoću drag & drop
+	// If the user is logged in, enable reservations with drag & drop
         if (AuthManager.isLoggedIn()) DragAndDropManager.setupHandlers();
     },
 
@@ -423,17 +428,17 @@ const App = {
         target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
     },
 
-    // povezujemo UI sa događajima
+    // Wire up UI events
     setupEvents() {
-	// interfejs za podešavanje datuma
+	// Date controls
         document.getElementById("date-prev").onclick = () => this.changeDate(-1);
         document.getElementById("date-next").onclick = () => this.changeDate(1);
         document.getElementById("date-input").onchange = () => this.refresh();
 
-	// dugme za logout
+	// Logout button
         document.getElementById("logout").onclick = () => AuthManager.logout(() => this.refresh());
 
-	// formular za login
+	// Login form
         document.getElementById("login-form").onsubmit = async (e) => {
             e.preventDefault();
             const u = document.getElementById("username").value;
@@ -443,7 +448,7 @@ const App = {
         };
     },
 
-    // menjamo datum za dati broj dana (bilo pozitivan, bilo negativan)
+    // Move the date by the given number of days, positive or negative
     changeDate(days) {
         const input = document.getElementById("date-input");
         const d = new Date(input.value);

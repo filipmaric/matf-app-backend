@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 import datetime as dt
 import sqlite3
 import subprocess
@@ -10,11 +11,14 @@ PYTHON = sys.executable
 
 
 def init_conflict_db(db_path):
-    target_day = dt.date(2026, 3, 10)
+    target_day = dt.date(2026, 4, 10)
     conn = sqlite3.connect(db_path)
     with conn:
         with open(REPO_ROOT / "schema.sql", encoding="utf-8") as f:
             conn.executescript(f.read())
+        # Seed legacy invalid data to verify that the diagnostic still reports it.
+        conn.execute("DROP TRIGGER trg_reservations_no_overlap_insert")
+        conn.execute("DROP TRIGGER trg_reservations_no_overlap_update")
 
         conn.execute(
             """
@@ -32,17 +36,17 @@ def init_conflict_db(db_path):
         )
         conn.execute(
             """
-            INSERT INTO semesters (name, start_date, end_date)
-            VALUES (?, ?, ?)
+            INSERT INTO semesters (academic_year_start, season, start_date, end_date)
+            VALUES (?, ?, ?, ?)
             """,
-            ("Spring 2026", "2026-03-01", "2026-03-31"),
+            (2025, "пролећни", "2026-03-23", "2026-09-30"),
         )
         conn.execute(
             """
-            INSERT INTO days (date, is_working, week_day)
+            INSERT INTO days (date, kind, week_day)
             VALUES (?, ?, ?)
             """,
-            (target_day.isoformat(), 1, target_day.weekday()),
+            (target_day.isoformat(), "teaching", target_day.weekday()),
         )
         conn.execute(
             "INSERT INTO reservations (room_id, username, date, start_slot, end_slot, description) VALUES (?, ?, ?, ?, ?, ?)",
@@ -100,10 +104,10 @@ def test_report_conflicts_finds_future_overlaps(tmp_path):
     db_path = tmp_path / "conflicts.db"
     init_conflict_db(db_path)
 
-    result = run_script(db_path, "2026-03-10T08:00:00")
+    result = run_script(db_path, "2026-04-10T08:00:00")
 
     assert result.returncode == 1
-    assert "Conflicts found after 2026-03-10T08:00" in result.stdout
+    assert "Conflicts found after 2026-04-10T08:00" in result.stdout
     assert "reservation #1" in result.stdout
     assert "reservation #2" in result.stdout
     assert "weekly session #1" in result.stdout
@@ -112,7 +116,7 @@ def test_report_conflicts_finds_future_overlaps(tmp_path):
 
 def test_report_conflicts_clean_db_exits_zero(tmp_path):
     db_path = tmp_path / "clean.db"
-    target_day = dt.date(2026, 3, 10)
+    target_day = dt.date(2026, 4, 10)
 
     conn = sqlite3.connect(db_path)
     with conn:
@@ -127,21 +131,21 @@ def test_report_conflicts_clean_db_exits_zero(tmp_path):
         )
         conn.execute(
             """
-            INSERT INTO semesters (name, start_date, end_date)
-            VALUES (?, ?, ?)
+            INSERT INTO semesters (academic_year_start, season, start_date, end_date)
+            VALUES (?, ?, ?, ?)
             """,
-            ("Spring 2026", "2026-03-01", "2026-03-31"),
+            (2025, "пролећни", "2026-03-23", "2026-09-30"),
         )
         conn.execute(
             """
-            INSERT INTO days (date, is_working, week_day)
+            INSERT INTO days (date, kind, week_day)
             VALUES (?, ?, ?)
             """,
-            (target_day.isoformat(), 1, target_day.weekday()),
+            (target_day.isoformat(), "teaching", target_day.weekday()),
         )
     conn.close()
 
-    result = run_script(db_path, "2026-03-10T08:00:00")
+    result = run_script(db_path, "2026-04-10T08:00:00")
 
     assert result.returncode == 0
-    assert "No conflicts found after 2026-03-10T08:00" in result.stdout
+    assert "No conflicts found after 2026-04-10T08:00" in result.stdout

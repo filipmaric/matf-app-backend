@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 const BASE_PATH = window.APP_CONFIG?.BASE_PATH || '';
 const getUrl = (endpoint) => `${BASE_PATH}${endpoint}`;
 const getCsrfToken = () => document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -33,8 +34,8 @@ async function handleResponse(res, errorText) {
 
 
 export const API = {
-    async whoami() {
-        const res = await fetch(getUrl("/whoami"));
+    async me() {
+        const res = await fetch(getUrl("/me"));
         return handleResponse(res);
     },
 
@@ -49,11 +50,13 @@ export const API = {
             headers: withCsrfHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ username, password }),
         });
-
+        if (res.status === 429) {
+            throw new Error("Превише покушаја. Покушајте поново касније.");
+        }
         if (!res.ok) {
             throw new Error("Пријава на систем није успела");
         }
-        return handleResponse(res);
+        return handleResponse(res, "Пријава на систем није успела");
     },
     async logout() {
         const res = await fetch(getUrl("/logout"), {

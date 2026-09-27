@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 import sys
 from pathlib import Path
 
@@ -6,8 +7,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 for site_packages in (
-    ROOT / "venv" / "lib" / "python3.10" / "site-packages",
-    ROOT / "venv" / "lib" / "python3.11" / "site-packages",
+    ROOT / ".venv" / "lib" / "python3.10" / "site-packages",
+    ROOT / ".venv" / "lib" / "python3.11" / "site-packages",
 ):
     if site_packages.exists() and str(site_packages) not in sys.path:
         sys.path.insert(0, str(site_packages))
@@ -20,6 +21,7 @@ import os
 import secrets
 
 import app as myapp
+from semester_utils import parse_semester_display_name
 
 class ScheduleFactory:
 
@@ -110,10 +112,34 @@ class TestDB:
             (name,),
         )
 
-    def semester(self, name="Winter 2026", start="2026-01-01", end="2026-12-31"):
+    def subject(self, code, name, accreditation, module, year=1):
         return self.execute(
-            "INSERT INTO semesters (name, start_date, end_date) VALUES (?, ?, ?)",
-            (name, start, end),
+            """
+            INSERT INTO subjects (code, name, accreditation, module, year)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (code, name, accreditation, module, year),
+        )
+
+    def course_subject(self, course_code, subject_id):
+        return self.execute(
+            """
+            INSERT INTO course_subjects (course_code, subject_id)
+            VALUES (?, ?)
+            """,
+            (course_code, subject_id),
+        )
+
+    def semester(self, name="2026/27. јесењи", start="2026-01-01", end="2026-12-31"):
+        parsed = parse_semester_display_name(name)
+        academic_year_start = parsed[0] if parsed is not None else None
+        season = parsed[1] if parsed is not None else None
+        return self.execute(
+            """
+            INSERT INTO semesters (academic_year_start, season, start_date, end_date)
+            VALUES (?, ?, ?, ?)
+            """,
+            (academic_year_start, season, start, end),
         )
 
     def student(self, username, student_index, surname, given_name):
@@ -125,21 +151,41 @@ class TestDB:
             (username, student_index, surname, given_name),
         )
 
-    def course_session(self, course_id, teacher_id, semester_id, type="lecture"):
+    def course_session(self, course_id, teacher_id, semester_id, type="lecture", weekly_lessons=0):
         return self.execute(
             """INSERT INTO course_sessions
-               (course_id, teacher_id, semester_id, type)
-               VALUES (?, ?, ?, ?)""",
-            (course_id, teacher_id, semester_id, type),
+               (course_id, teacher_id, semester_id, type, weekly_lessons)
+               VALUES (?, ?, ?, ?, ?)""",
+            (course_id, teacher_id, semester_id, type, weekly_lessons),
         )
 
-    def weekly_session(self, session_id, room_id, day_of_week, start_slot, end_slot):
-        return self.execute(
-            """INSERT INTO weekly_sessions
-               (session_id, room_id, day_of_week, start_slot, end_slot)
-               VALUES (?, ?, ?, ?, ?)""",
-            (session_id, room_id, day_of_week, start_slot, end_slot),
-        )
+    def weekly_session(
+        self,
+        session_id,
+        room_id,
+        day_of_week,
+        start_slot,
+        end_slot,
+        meeting_no=None,
+    ):
+        with self.app.app_context():
+            if meeting_no is None:
+                row = myapp.query_db(
+                    """
+                    SELECT COALESCE(MAX(meeting_no), 0) + 1 AS next_meeting_no
+                    FROM weekly_sessions
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                    one=True,
+                )
+                meeting_no = int(row["next_meeting_no"])
+            return myapp.execute_db(
+                """INSERT INTO weekly_sessions
+                   (session_id, meeting_no, room_id, day_of_week, start_slot, end_slot)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (session_id, meeting_no, room_id, day_of_week, start_slot, end_slot),
+            )
 
     def reservation(self, room_id, date, start, end,
                     description="test", username="user"):
@@ -199,12 +245,12 @@ def app():
     with myapp.app.app_context():
         conn = sqlite3.connect(db_path)
 
-        with open("schema.sql") as f:
+        with open(ROOT / "schema.sql", encoding="utf-8") as f:
             conn.executescript(f.read())
 
         conn.execute(
-            "INSERT INTO days (date, is_working, week_day) VALUES (?, ?, ?)",
-            ("2026-03-09", 1, 1),
+            "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+            ("2026-03-09", "teaching", 1),
         )
 
         conn.commit()

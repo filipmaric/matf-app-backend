@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `factory`
 
 This module provides the Flask application factory used by the bootstrap code.

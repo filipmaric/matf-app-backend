@@ -1,9 +1,10 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Semester and personal-reservations endpoints."""
 
 from flask import Blueprint, abort, jsonify, render_template, request
 from flask_login import current_user, login_required
 
-from auth import check_if_admin
+from auth import RATE_LIMITS, check_if_admin, enforce_rate_limit
 from db import query_db
 from semester import current_semester_id, fetch_semesters, select_semester
 
@@ -141,7 +142,7 @@ def weekly_session_instances_for_semester(semester_id, teacher_username=None):
         JOIN semesters s ON s.id = cs.semester_id
         JOIN days d
           ON d.date BETWEEN s.start_date AND s.end_date
-         AND d.is_working = 1
+         AND d.kind IN ('teaching', 'makeup')
          AND ws.day_of_week = CASE
                 WHEN d.week_day = -1 THEN ((CAST(strftime('%w', d.date) AS INTEGER) + 6) % 7)
                 ELSE d.week_day
@@ -192,6 +193,10 @@ def my_reservations_view():
 @login_required
 def my_reservations_json():
     """Return the semester-scoped JSON used by the My Reservations page."""
+    limited = enforce_rate_limit("my_reservations_data", *RATE_LIMITS["my_reservations_data"], key=current_user.username)
+    if limited is not None:
+        return limited
+
     semester_id = request.args.get("semester_id", type=int)
     semesters = fetch_semesters()
     selected_semester_id, selected_semester = select_semester(semester_id, semesters)

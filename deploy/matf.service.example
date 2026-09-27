@@ -1,0 +1,16 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
+[Unit]
+Description=Gunicorn za MatF App backend
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/matf-app
+Environment="PATH=/var/www/matf-app/.venv/bin"
+EnvironmentFile=/var/www/matf-app/matf.env
+ExecStart=/var/www/matf-app/.venv/bin/gunicorn -b 127.0.0.1:5000 wsgi:application
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

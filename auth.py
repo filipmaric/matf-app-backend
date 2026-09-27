@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Authentication, CSRF, rate-limiting, and RADIUS helpers."""
 
 import hmac
@@ -19,12 +20,14 @@ from pyrad.dictionary import Dictionary
 import pyrad.packet
 
 from config import (
-    SERVICE_API_KEY,
-    STUDENT_AUTH_BACKEND,
+    MOBILE_AUTH_REVIEW_PASSWORD,
+    MOBILE_AUTH_REVIEW_USERNAME,
+    REVIEW_MODE,
+    STUDENT_AUTH_MODE,
     STUDENT_RADIUS_DICTIONARY,
     STUDENT_RADIUS_SECRET,
     STUDENT_RADIUS_SERVER,
-    TEACHER_AUTH_BACKEND,
+    TEACHER_AUTH_MODE,
     TEACHER_RADIUS_DICTIONARY,
     TEACHER_RADIUS_SECRET,
     TEACHER_RADIUS_SERVER,
@@ -40,7 +43,22 @@ RATE_LIMITS = {
     "login": (10, 300),
     "reservation": (30, 60),
     "calendar": (10, 60),
-    "attendance": (300, 60),
+    "attendance": (600, 60),
+    "rooms": (60, 60),
+    "occupancy": (30, 60),
+    "my_reservations_data": (30, 60),
+    "calendar_data": (60, 60),
+    "mobile_2fa": (60, 60),
+    "mobile_me": (60, 60),
+    "mobile_logout": (20, 60),
+    "mobile_push_token": (20, 60),
+    "mobile_sessions": (60, 60),
+    "mobile_timetable": (30, 60),
+    "mobile_buildings": (30, 60),
+    "mobile_calendar": (60, 60),
+    "mobile_exam_schedule": (30, 60),
+    "mobile_exam_applications": (20, 60),
+    "mobile_attendance_history": (30, 60),
 }
 
 login_manager = LoginManager()
@@ -84,7 +102,6 @@ def enforce_csrf():
 
     if request.path.startswith("/auth/") or request.path.startswith("/mobile/"):
         return None
-
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         return None
@@ -115,12 +132,18 @@ def _rate_limit_bucket(scope, key=None):
 
 
 def _is_bearer_service_request():
-    """Return True when the request uses the bearer service API key."""
+    """Return True when the request uses the backend service bearer token."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return False
     token = auth.split(" ", 1)[1]
-    return token == current_app.config["SERVICE_API_KEY"]
+    return token == current_app.config["BACKEND_SERVICE_BEARER_TOKEN"]
+
+
+def login_rate_limit_key(username):
+    """Build the rate-limit key for login attempts."""
+    normalized = str(username or "").strip().lower()
+    return normalized or None
 
 
 def enforce_rate_limit(scope, limit, window_seconds, key=None):
@@ -159,7 +182,7 @@ def unauthorized():
 
 
 def login_or_service_required(f):
-    """Allow either a logged-in user or the bearer service key to call a route."""
+    """Allow either a logged-in user or the backend service bearer token to call a route."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if current_user.is_authenticated:
@@ -168,7 +191,23 @@ def login_or_service_required(f):
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth.split(" ", 1)[1]
-            if token == current_app.config["SERVICE_API_KEY"]:
+            if token == current_app.config["BACKEND_SERVICE_BEARER_TOKEN"]:
+                g.service_auth = True
+                return f(*args, **kwargs)
+
+        return jsonify({"error": "Unauthorized"}), 401
+
+    return decorated
+
+
+def service_required(f):
+    """Allow only the backend service bearer token to call a route."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth.split(" ", 1)[1]
+            if token == current_app.config["BACKEND_SERVICE_BEARER_TOKEN"]:
                 g.service_auth = True
                 return f(*args, **kwargs)
 
@@ -209,7 +248,7 @@ def radius_auth_mock(username, password):
 def radius_auth(username, password):
     """Authenticate a teacher against the configured teacher RADIUS backend."""
     username = normalize_teacher_username(username)
-    if TEACHER_AUTH_BACKEND != "radius":
+    if TEACHER_AUTH_MODE != "radius":
         return radius_auth_mock(username, password)
 
     client = Client(
@@ -233,7 +272,7 @@ def radius_auth(username, password):
 
 def student_radius_auth(username, password, raise_on_error=False):
     """Authenticate a student against the configured student RADIUS backend."""
-    if STUDENT_AUTH_BACKEND != "radius":
+    if STUDENT_AUTH_MODE != "radius":
         return radius_auth_mock(username, password)
 
     client = Client(
@@ -262,7 +301,16 @@ def student_radius_auth(username, password, raise_on_error=False):
 
 def login_user_from_credentials(username, password):
     """Authenticate a teacher and create a browser session."""
-    username = normalize_teacher_username(username)
+    raw_username = str(username or "").strip()
+    review_username = str(MOBILE_AUTH_REVIEW_USERNAME or "").strip()
+    review_password = str(MOBILE_AUTH_REVIEW_PASSWORD or "")
+
+    if REVIEW_MODE and raw_username == review_username and password == review_password:
+        user = User(raw_username)
+        login_user(user)
+        return jsonify({"success": True, "username": user.username, "role": user.role}), 200
+
+    username = normalize_teacher_username(raw_username)
     if radius_auth(username, password):
         user = User(username)
         login_user(user)
@@ -273,13 +321,12 @@ def login_user_from_credentials(username, password):
 @bp.route("/login", methods=["POST"])
 def login():
     """Authenticate a teacher and create a browser session."""
-    limited = enforce_rate_limit("login", *RATE_LIMITS["login"])
-    if limited is not None:
-        return limited
-
     data = request.get_json() or {}
     username = data.get("username")
     password = data.get("password")
+    limited = enforce_rate_limit("login", *RATE_LIMITS["login"], key=login_rate_limit_key(username))
+    if limited is not None:
+        return limited
     return login_user_from_credentials(username, password)
 
 
@@ -296,17 +343,17 @@ def logout():
     return logout_current_user()
 
 
-def whoami_payload():
+def me_payload():
     """Report whether the current request is authenticated."""
     if current_user.is_authenticated:
         return jsonify({"logged_in": True, "username": current_user.username})
     return jsonify({"logged_in": False})
 
 
-@bp.route("/whoami", methods=["GET"])
-def whoami():
+@bp.route("/me", methods=["GET"])
+def me():
     """Report whether the current request is authenticated."""
-    return whoami_payload()
+    return me_payload()
 
 
 # Authorization helpers.

@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
+flask
+flask-login
+gunicorn
+pyrad
+pytest
+requests
+google-auth
+google-auth-oauthlib

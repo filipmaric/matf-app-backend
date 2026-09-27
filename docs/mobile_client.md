@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # Mobile Client Contract
 
 This page collects the backend endpoints and payloads that a native iOS client needs in order
@@ -10,6 +11,7 @@ The mobile client currently needs:
 - authentication against the student RADIUS backend
 - a persisted bearer token
 - the current-semester attendance summary
+- the personalized semester timetable
 - QR attendance check-in
 - rotating challenge numbers
 - optional geofence enforcement
@@ -19,7 +21,7 @@ same JSON contract that the Android app already uses.
 
 ## Base URL
 
-The app may be deployed under a path prefix such as `/rezervacije`, so the mobile client should
+The app may be deployed under a path prefix such as `/matf-app`, so the mobile client should
 not hard-code the host or path. Treat the deployment base URL as configurable.
 
 All examples below use plain root-relative paths.
@@ -88,7 +90,14 @@ Response:
     "device_name": "iPhone",
     "expires_at": "2026-06-21T12:00:00+00:00",
     "last_seen_at": "2026-06-21T11:15:00+00:00"
-  }
+  },
+  "two_factor": {
+    "enabled": true,
+    "setup_pending": false,
+    "disabled": false,
+    "grace_active": true
+  },
+  "unread_count": 3
 }
 ```
 
@@ -128,14 +137,6 @@ Response:
 }
 ```
 
-### `GET /mobile/healthz`
-
-Response:
-
-```json
-{"ok": true}
-```
-
 ## Attendance History
 
 ### `GET /mobile/attendance/history`
@@ -169,6 +170,73 @@ Response:
 ```
 
 Only courses with at least one recorded attendance appear.
+
+## Personalized Timetable
+
+### `GET /mobile/timetable`
+
+Headers:
+
+```http
+Authorization: Bearer <token>
+```
+
+Optional query parameters:
+
+- `semester_id`
+
+Response:
+
+```json
+{
+  "student": {
+    "username": "student1",
+    "student_index": "125/1997",
+    "student_name": "Filip Maric",
+    "student_label": "Filip Maric (125/1997)"
+  },
+  "semester": {
+    "id": 2,
+    "name": "2026/27. prolećni",
+    "start_date": "2026-03-23",
+    "end_date": "2026-09-30"
+  },
+  "enrollments": [
+    {
+      "course_id": 10,
+      "course_code": "an1",
+      "course_name": "Analiza 1",
+      "group_id": 4,
+      "group_name": "1o1",
+      "semester_id": 2
+    }
+  ],
+  "events": [
+    {
+      "course_id": 10,
+      "course_code": "an1",
+      "course_name": "Analiza 1",
+      "course_type": "p",
+      "group_id": 4,
+      "group_name": "1o1",
+      "teacher_username": "predrag.janicic",
+      "teacher_name": "Predrag Janičić",
+      "room_id": 12,
+      "room_name": "406",
+      "room_code": "406",
+      "day_of_week": 1,
+      "start_slot": 10,
+      "end_slot": 12,
+      "weekly_session_id": 1234,
+      "course_session_id": 4321,
+      "semester_id": 2
+    }
+  ],
+  "generated_at": "2026-08-12T12:00:00+00:00"
+}
+```
+
+The `events` array is flat; the client can group it by day or render it as an agenda.
 
 ## Attendance Scan Flow
 
@@ -238,8 +306,8 @@ Example:
   "attendance_geofence_warning": null,
   "attendance_locations": [
     {
-      "building_name": "Студентски трг",
-      "name": "Студентски трг",
+      "building_name": "Studentski trg",
+      "name": "Studentski trg",
       "latitude": 44.8200177330261,
       "longitude": 20.45871822883615,
       "radius_m": 100

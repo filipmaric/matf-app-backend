@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # Attendance
 
 The attendance flow works like this:

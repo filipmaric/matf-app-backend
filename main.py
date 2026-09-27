@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Main page blueprint for the classroom reservation app."""
 
 from flask import Blueprint, jsonify, render_template

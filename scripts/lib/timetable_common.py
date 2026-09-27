@@ -1,7 +1,12 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 import csv
 import datetime as dt
 import re
+import unicodedata
 from collections import defaultdict
+
+from calendar_common import is_schedule_day
+from room_common import TEACHER_OFFICE_ROOM_TYPE
 
 
 DAY_MAP = {
@@ -15,6 +20,78 @@ DAY_MAP = {
 }
 
 REVERSE_DAY_MAP = {v: k for k, v in DAY_MAP.items()}
+
+CYRILLIC_TO_LATIN = str.maketrans(
+    {
+        "А": "A",
+        "Б": "B",
+        "В": "V",
+        "Г": "G",
+        "Д": "D",
+        "Ђ": "Dj",
+        "Е": "E",
+        "Ж": "Z",
+        "З": "Z",
+        "И": "I",
+        "Ј": "J",
+        "К": "K",
+        "Л": "L",
+        "Љ": "Lj",
+        "М": "M",
+        "Н": "N",
+        "Њ": "Nj",
+        "О": "O",
+        "П": "P",
+        "Р": "R",
+        "С": "S",
+        "Т": "T",
+        "Ћ": "C",
+        "У": "U",
+        "Ф": "F",
+        "Х": "H",
+        "Ц": "C",
+        "Ч": "C",
+        "Џ": "Dz",
+        "Ш": "S",
+        "а": "a",
+        "б": "b",
+        "в": "v",
+        "г": "g",
+        "д": "d",
+        "ђ": "dj",
+        "е": "e",
+        "ж": "z",
+        "з": "z",
+        "и": "i",
+        "ј": "j",
+        "к": "k",
+        "л": "l",
+        "љ": "lj",
+        "м": "m",
+        "н": "n",
+        "њ": "nj",
+        "о": "o",
+        "п": "p",
+        "р": "r",
+        "с": "s",
+        "т": "t",
+        "ћ": "c",
+        "у": "u",
+        "ф": "f",
+        "х": "h",
+        "ц": "c",
+        "ч": "c",
+        "џ": "dz",
+        "ш": "s",
+    }
+)
+
+
+def normalize_group_name(name: str) -> str:
+    text = unicodedata.normalize("NFKD", str(name or "").strip().translate(CYRILLIC_TO_LATIN))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\s+", "", text)
+    return text.lower()
 
 
 def load_metadata(filename):
@@ -37,17 +114,19 @@ def parse_line(line):
 
     teacher = parts[0]
     groups = [g.strip() for g in re.split(r"[.,;|]+", parts[1]) if g.strip()]
-    course_code = parts[2]
+    course_token = parts[2]
     day_str = parts[3]
     start_slot = int(parts[4])
     end_slot = int(parts[5])
     room_code = parts[6]
 
-    course_parts = course_code.split(".")
-    if len(course_parts) < 2:
-        raise ValueError(f"Invalid course code: {course_code}")
-    course_name = course_parts[0]
-    course_type = course_parts[1]
+    course_parts = course_token.rsplit(".", 1)
+    if len(course_parts) == 2 and course_parts[1] in {"p", "v", "k", "o"}:
+        course_code, course_type = course_parts
+    else:
+        # Some course codes contain a dot, but have no explicit session type.
+        course_code = course_token
+        course_type = None
 
     if day_str not in DAY_MAP:
         raise ValueError(f"Invalid day: {day_str}")
@@ -55,7 +134,7 @@ def parse_line(line):
     return (
         teacher,
         groups,
-        course_name,
+        course_code,
         course_type,
         DAY_MAP[day_str],
         start_slot,
@@ -123,27 +202,58 @@ def get_latest_semester_id(cur):
 
 
 def get_room_id(cur, code):
-    cur.execute("SELECT id FROM rooms WHERE code = ?", (code,))
+    lookup_code = str(code).strip()
+    if lookup_code.lower() == "kab":
+        lookup_code = "kab"
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO rooms
+                (name, capacity, type, building_name, code, priority)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "Кабинет наставника",
+                0,
+                TEACHER_OFFICE_ROOM_TYPE,
+                "Кабинет наставника",
+                "kab",
+                1000,
+            ),
+        )
+        cur.execute(
+            "UPDATE rooms SET type = ? WHERE code = ?",
+            (TEACHER_OFFICE_ROOM_TYPE, "kab"),
+        )
+    cur.execute("SELECT id FROM rooms WHERE code = ?", (lookup_code,))
     row = cur.fetchone()
     if not row:
         raise ValueError(f"Room not found: {code}")
     return row[0]
 
 
-def find_session_ids(cur, teacher_username, course_code, course_type, groups):
-    cur.execute(
+def find_session_ids(cur, teacher_username, course_code, course_type, groups, semester_id=None):
+    query = [
         """
         SELECT cs.id
         FROM course_sessions cs
         JOIN teachers t ON cs.teacher_id = t.id
         JOIN courses c ON cs.course_id = c.id
-        WHERE t.username = ? AND c.code = ? AND cs.type = ?
-        """,
-        (teacher_username, course_code, course_type),
-    )
+        WHERE t.username = ? AND c.code = ?
+        """
+    ]
+    params = [teacher_username, course_code]
+    if course_type is not None:
+        query[0] += " AND cs.type = ?"
+        params.append(course_type)
+    if semester_id is not None:
+        query.append(" AND cs.semester_id = ?")
+        params.append(semester_id)
+
+    cur.execute("".join(query), params)
 
     potential_sessions = cur.fetchall()
-    ids = []
+    exact_ids = []
+    superset_ids = []
     wanted_groups = set(groups)
     for (session_id,) in potential_sessions:
         cur.execute(
@@ -157,9 +267,11 @@ def find_session_ids(cur, teacher_username, course_code, course_type, groups):
         )
         existing_groups = {row[0] for row in cur.fetchall()}
         if existing_groups == wanted_groups:
-            ids.append(session_id)
+            exact_ids.append(session_id)
+        elif wanted_groups < existing_groups:
+            superset_ids.append(session_id)
 
-    return ids
+    return exact_ids or superset_ids
 
 
 def slot_datetime(day, slot):
@@ -173,7 +285,7 @@ def overlaps(a_start, a_end, b_start, b_end):
 def load_days(conn, start_date):
     rows = conn.execute(
         """
-        SELECT date, is_working, week_day
+        SELECT date, kind, week_day
         FROM days
         WHERE date >= ?
         ORDER BY date
@@ -187,7 +299,7 @@ def load_days(conn, start_date):
         if week_day == -1:
             week_day = day.weekday()
         days[day] = {
-            "is_working": row["is_working"] == 1,
+            "kind": row["kind"],
             "week_day": week_day,
         }
     return days
@@ -253,8 +365,10 @@ def load_future_weekly_occurrences(conn, now):
         JOIN courses c ON c.id = cs.course_id
         JOIN teachers t ON t.id = cs.teacher_id
         JOIN semesters s ON s.id = cs.semester_id
+        WHERE ro.type IS NULL OR ro.type != ?
         ORDER BY ws.id
-        """
+        """,
+        (TEACHER_OFFICE_ROOM_TYPE,),
     ).fetchall()
 
     days = load_days(conn, now.date())
@@ -280,7 +394,7 @@ def load_future_weekly_occurrences(conn, now):
 
         while current <= semester_end:
             day_info = days.get(current)
-            if not day_info or not day_info["is_working"]:
+            if not day_info or not is_schedule_day(day_info["kind"]):
                 current += dt.timedelta(days=1)
                 continue
 

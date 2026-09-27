@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `auth`
 
 This module owns browser authentication, teacher RADIUS login, student RADIUS authentication,
@@ -9,14 +10,16 @@ It also exposes the small set of auth-related routes:
 
 - `POST /login`
 - `POST /logout`
-- `GET /whoami`
+- `GET /me`
 - `GET /is_admin/<username>`
 
 ## Access Notes
 
 - `POST /login` does not need a prior session.
-- `POST /logout` and `GET /whoami` use the current browser session.
+- `POST /logout` and `GET /me` use the current browser session.
 - `GET /is_admin/<username>` is public, but it only reports an admin flag.
+- `POST /login` is rate limited per username when a username is supplied, with an IP fallback
+  for malformed requests.
 
 ## Examples
 
@@ -29,10 +32,12 @@ curl -i -c cookies.txt \
   http://127.0.0.1:5000/login
 ```
 
+If `REVIEW_MODE=1` is configured, the backend also accepts the review login path.
+
 Check the current session:
 
 ```bash
-curl -i -b cookies.txt http://127.0.0.1:5000/whoami
+curl -i -b cookies.txt http://127.0.0.1:5000/me
 ```
 
 Log out:

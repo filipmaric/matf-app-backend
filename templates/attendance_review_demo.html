@@ -1,0 +1,96 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+    <title>QR provera za pregled</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+    <style>
+        .review-demo-shell {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 24px 16px 40px;
+        }
+
+        .review-demo-card {
+            background: #fff;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+        }
+
+        .review-demo-card h1 {
+            margin: 0 0 12px;
+            font-size: 1.5rem;
+        }
+
+        .review-demo-meta {
+            color: #555;
+            line-height: 1.5;
+            margin-bottom: 18px;
+        }
+
+        .review-demo-qr {
+            display: flex;
+            justify-content: center;
+            margin: 18px 0 20px;
+        }
+
+        .review-demo-qr img {
+            width: 240px;
+            height: 240px;
+            border-radius: 16px;
+            border: 12px solid #fff;
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+            background: #fff;
+        }
+
+        .review-demo-note {
+            background: #f7f8fb;
+            border-radius: 14px;
+            padding: 14px 16px;
+            color: #333;
+            line-height: 1.5;
+        }
+
+        .review-demo-link {
+            word-break: break-all;
+            font-size: 0.92rem;
+            color: #666;
+            margin-top: 14px;
+        }
+    </style>
+</head>
+<body>
+  <header class="attendance-page-header">
+    <h1>QR provera za pregled</h1>
+    <p><a href="{{ url_for('main.index') }}">Nazad na raspored</a></p>
+  </header>
+
+  <main class="page-shell review-demo-shell">
+    <section class="review-demo-card">
+      <h1>{{ attendance_event.course_name }}</h1>
+      <div class="review-demo-meta">
+        <div>Datum: {{ attendance_event.event_date }}</div>
+        <div>Vreme: {{ attendance_event.start_slot }}:00 - {{ attendance_event.end_slot }}:00</div>
+        <div>Sala: {{ attendance_event.room_name }}</div>
+        <div>Nastavnik: {{ attendance_event.teacher_name }}</div>
+      </div>
+
+      <div class="review-demo-qr">
+        <img src="{{ qr_url }}" alt="QR kod za pregled">
+      </div>
+
+      <div class="review-demo-note">
+        Ova stranica služi samo za pregled aplikacije. QR kod otvara standardni tok prijave prisustva, ali uspešna prijava na ovom demo događaju ne upisuje nikakve podatke u bazu.
+      </div>
+
+      <div class="review-demo-link">
+        Link: {{ join_url }}
+      </div>
+    </section>
+  </main>
+</body>
+</html>

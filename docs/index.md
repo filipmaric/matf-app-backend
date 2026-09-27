@@ -1,6 +1,7 @@
-# Classroom Reservation System
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+# MatF App
 
-This site documents the classroom reservation app, its deployment setup, and the Python modules that implement the API.
+This site documents MatF App, its deployment setup, and the Python modules that implement the API.
 
 ## What to read
 

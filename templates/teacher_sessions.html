@@ -1,0 +1,51 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>Наставнички часови</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+</head>
+<body>
+  <main class="page-shell teacher-sessions-shell">
+    <header class="attendance-page-header">
+      <h1>Наставнички часови</h1>
+      <p><a href="{{ url_for('main.index') }}">Назад на распоред</a></p>
+    </header>
+
+    <section class="teacher-sessions-toolbar attendance-panel">
+      <label for="academic-year-select">Школска година:</label>
+      <select id="academic-year-select">
+        {% for item in academic_years %}
+          <option value="{{ item.academic_year }}"{% if item.academic_year == selected_academic_year %} selected{% endif %}>
+            {{ item.academic_year }}
+          </option>
+        {% endfor %}
+      </select>
+
+      <label for="season-select">Семестар:</label>
+      <select id="season-select">
+        {% for item in seasons %}
+          <option value="{{ item.value }}"{% if item.value == selected_season %} selected{% endif %}>
+            {{ item.label }}
+          </option>
+        {% endfor %}
+      </select>
+
+      <label for="teacher-select">Наставник:</label>
+      <select id="teacher-select"></select>
+      <p class="teacher-sessions-note">Изаберите школску годину, семестар и наставника.</p>
+    </section>
+
+    <section id="teacher-sessions-root" aria-live="polite"></section>
+  </main>
+
+  <script>
+    window.APP_CONFIG = {
+        BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
+    };
+  </script>
+  <script type="module" src="{{ url_for('static', filename='js/teacherSessions.js') }}"></script>
+</body>
+</html>

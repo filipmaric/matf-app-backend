@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 /* ==========================================================================
    1. OSNOVNI STILOVI (Base)
    ========================================================================== */
@@ -182,6 +183,14 @@ body {
 
 .teacher-page-shell {
     width: min(100%, 880px);
+}
+
+.teacher-sessions-shell {
+    width: min(100%, 980px);
+}
+
+.group-sessions-shell {
+    width: min(100%, 980px);
 }
 
 .reservations-page-shell {
@@ -393,6 +402,105 @@ body {
     cursor: pointer;
 }
 
+.teacher-sessions-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.teacher-sessions-toolbar label {
+    font-weight: 700;
+}
+
+.teacher-sessions-toolbar select {
+    min-width: min(100%, 320px);
+    height: 34px;
+    border-radius: 4px;
+    border: 1px solid #c9c9c9;
+    background: #fff;
+    padding: 0 10px;
+}
+
+.teacher-sessions-note {
+    margin: 0;
+    color: #5b5b5b;
+}
+
+.teacher-sessions-summary h2,
+.teacher-session-card h3,
+.teacher-session-card h4 {
+    margin: 0 0 8px;
+}
+
+.teacher-sessions-summary p,
+.teacher-session-card p {
+    margin: 0;
+}
+
+.teacher-sessions-list {
+    display: grid;
+    gap: 12px;
+}
+
+.group-session-course {
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+    border: 2px solid #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.group-session-course > h3 {
+    margin: 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+.group-session-activities {
+    display: grid;
+    gap: 8px;
+}
+
+.teacher-session-card {
+    display: grid;
+    gap: 8px;
+}
+
+.teacher-session-groups {
+    color: #444;
+}
+
+.session-type-lecture {
+    color: #1d4ed8;
+    font-weight: 700;
+}
+
+.session-type-exercise {
+    color: #dc2626;
+    font-weight: 700;
+}
+
+.teacher-session-weekly-list {
+    margin: 0;
+    padding-left: 20px;
+    display: grid;
+    gap: 4px;
+}
+
+.teacher-sessions-empty,
+.teacher-sessions-loading,
+.teacher-sessions-error {
+    font-weight: 600;
+}
+
+.group-sessions-empty,
+.group-sessions-loading,
+.group-sessions-error {
+    font-weight: 600;
+}
+
 .reservations-page-shell #reservations-page {
     width: 100%;
 }
@@ -440,6 +548,11 @@ body {
     letter-spacing: 0.12em;
     text-align: center;
     margin: 10px 0;
+}
+
+.attendance-code-danger {
+    color: #c1121f;
+    text-shadow: 0 0 0.01px currentColor;
 }
 
 .attendance-countdown {
@@ -861,6 +974,10 @@ table.occupancy-table {
     table-layout: fixed;
 }
 
+.occupancy-location-title {
+    text-align: center;
+}
+
 .reservations-page-shell table,
 .student-attendance-shell table,
 .attendance-dialog table {
@@ -912,7 +1029,7 @@ table.occupancy-table th.time {
     }
 }
 
-/* Onemogući selekciju teksta tokom drag-a */
+/* Disable text selection during drag */
 table {
     user-select: none;
     -webkit-user-select: none;
@@ -979,7 +1096,7 @@ table.occupancy-table td.reservation {
     justify-content: space-between;
     align-items: flex-start;
     margin-bottom: 5px;
-    z-index: 20; /* Iznad svega da bi dugmići radili */
+    z-index: 20; /* Above everything so the buttons work */
 }
 
 .res-top-bar-left,
@@ -999,22 +1116,22 @@ table.occupancy-table td.reservation {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    pointer-events: none; /* Tekst ne smeta klikovima ispod ako treba */
+    pointer-events: none; /* Text does not block clicks below if needed */
 }
 
 .res-user { font-size: 0.75rem; color: #444; }
 .res-desc { font-size: 0.9rem; font-weight: 600; color: #1a237e; }
 
-/* Tipovi nastave (boje teksta) */
-span.p { color: #007bff; font-weight: bold; } /* Predavanja */
-span.v { color: #dc3545; }                     /* Vežbe */
-span.k { color: #28a745; }                     /* Kolokvijum */
-span.o { color: #000000; }                     /* Ostalo */
+/* Class types (text colors) */
+span.p { color: #007bff; font-weight: bold; } /* Lectures */
+span.v { color: #dc3545; }                     /* Exercises */
+span.k { color: #28a745; }                     /* Quiz */
+span.o { color: #000000; }                     /* Other */
 
 span.room { color: #333; font-size: 12px; }
 
 /* ==========================================================================
-   5. DRAG & DROP SENZORI za otkazane časove
+   5. DRAG & DROP SENSORS for canceled classes
    ========================================================================== */
 .weekly-canceled { 
     position: relative;

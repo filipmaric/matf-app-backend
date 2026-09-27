@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Rooms, working-day logic, and occupancy read endpoints."""
 
 import datetime
@@ -5,7 +6,10 @@ import datetime
 from flask import Blueprint, abort, jsonify, request
 
 from attendance import attendance_is_open_now
+from auth import RATE_LIMITS, enforce_rate_limit
+from calendar_common import is_schedule_day
 from db import query_db
+from room_common import TEACHER_OFFICE_ROOM_TYPE
 
 
 bp = Blueprint("occupancy", __name__)
@@ -17,15 +21,23 @@ bp = Blueprint("occupancy", __name__)
 @bp.route("/rooms")
 def list_rooms():
     """Return the rooms list, optionally filtered by room type."""
-    query = "SELECT id, name, capacity, type, building_name AS location, priority FROM rooms"
-    params = ()
+    limited = enforce_rate_limit("rooms", *RATE_LIMITS["rooms"])
+    if limited is not None:
+        return limited
+
+    query = """
+        SELECT id, name, capacity, type, building_name AS location, priority
+        FROM rooms
+        WHERE (type IS NULL OR type != ?)
+    """
+    params = [TEACHER_OFFICE_ROOM_TYPE]
 
     room_type = request.args.get("type")
     if room_type:
-        query += " WHERE type = ?"
-        params = (room_type,)
+        query += " AND type = ?"
+        params.append(room_type)
 
-    rows = query_db(query, params)
+    rows = query_db(query, tuple(params))
     rooms_list = [
         {
             "id": r["id"],
@@ -49,12 +61,12 @@ def iso_to_weekday(date_str):
 
 def check_day(date):
     """Look up the calendar row for a date and derive its working-day status."""
-    ad = query_db("SELECT is_working, week_day FROM days WHERE date = ?", (date,), one=True)
+    ad = query_db("SELECT kind, week_day FROM days WHERE date = ?", (date,), one=True)
     if ad:
-        is_working = ad["is_working"] == 1
+        kind = ad["kind"]
         week_day = ad["week_day"]
     else:
-        is_working = False
+        kind = "non_working"
         week_day = -1
 
     if week_day == -1:
@@ -62,7 +74,7 @@ def check_day(date):
     else:
         dow = week_day
 
-    return (is_working, week_day, dow)
+    return (kind, week_day, dow)
 
 
 def _attendance_count_for_event(kind, event_id, event_date):
@@ -99,6 +111,10 @@ def _can_cancel_reservation_on_date(date_str, attendance_count=0, now=None):
 @bp.route("/occupancy")
 def occupancy():
     """Return the merged room occupancy for a single date."""
+    limited = enforce_rate_limit("occupancy", *RATE_LIMITS["occupancy"])
+    if limited is not None:
+        return limited
+
     date = request.args.get("date")
     if not date:
         abort(400, "date param required YYYY-MM-DD")
@@ -107,10 +123,10 @@ def occupancy():
     except ValueError:
         abort(400, "invalid date format, expected YYYY-MM-DD")
 
-    is_working, week_day, dow = check_day(date)
+    kind, week_day, dow = check_day(date)
     result = {}
 
-    if is_working:
+    if is_schedule_day(kind):
         q = """
         SELECT ws.id AS ws_id,
                ws.room_id,
@@ -137,6 +153,7 @@ def occupancy():
               AND wxc.date = ?
         WHERE ws.day_of_week = ?
           AND ? BETWEEN s.start_date AND s.end_date
+          AND (r.type IS NULL OR r.type != ?)
         GROUP BY ws.id,
           ws.room_id,
           r.name,
@@ -148,7 +165,7 @@ def occupancy():
           t.name,
           t.username;
          """
-        for r in query_db(q, (date, dow, date)):
+        for r in query_db(q, (date, dow, date, TEACHER_OFFICE_ROOM_TYPE)):
             if bool(r["is_canceled"]):
                 overlap = query_db(
                     """
@@ -223,4 +240,4 @@ def occupancy():
     for k in result:
         result[k].sort(key=lambda x: x["start"])
 
-    return jsonify({"date": date, "is_working": is_working, "week_day": dow, "rooms": result})
+    return jsonify({"date": date, "kind": kind, "week_day": dow, "rooms": result})

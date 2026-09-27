@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 import datetime
 
 import app as myapp
@@ -39,7 +40,7 @@ def freeze_attendance_now(monkeypatch, fixed_now):
 
 
 def make_weekly_event(db):
-    semester = db.semester(name="Current 2026", start="2026-01-01", end="2026-12-31")
+    semester = db.semester(name="2026/27. јесењи", start="2026-01-01", end="2026-12-31")
     db.building_location("A", 10.0, 20.0, radius_m=100)
     room = db.room("R1", building_name="A")
     teacher = db.teacher("Prof", "alice")
@@ -95,7 +96,7 @@ def test_mobile_attendance_challenge_and_submit(client, db, monkeypatch):
 
     roster = myapp.query_db(
         """
-        SELECT username, registration_source, client_ip, client_latitude, client_longitude, geofence_checked
+        SELECT username, registration_source, client_ip, geofence_checked
         FROM attendance_records
         WHERE event_kind = ? AND event_id = ? AND event_date = ?
         """,
@@ -105,8 +106,6 @@ def test_mobile_attendance_challenge_and_submit(client, db, monkeypatch):
     assert roster["username"] == "alice"
     assert roster["registration_source"] == "android"
     assert roster["client_ip"] == "192.0.2.20"
-    assert roster["client_latitude"] == 10.0
-    assert roster["client_longitude"] == 20.0
     assert int(roster["geofence_checked"]) == 1
 
 
@@ -253,15 +252,13 @@ def test_mobile_attendance_persists_location_when_geofence_is_disabled(client, d
 
     stored = myapp.query_db(
         """
-        SELECT client_latitude, client_longitude, geofence_checked
+        SELECT geofence_checked
         FROM attendance_records
         WHERE event_kind = ? AND event_id = ? AND event_date = ?
         """,
         ("weekly", weekly_session_id, event_date),
         one=True,
     )
-    assert stored["client_latitude"] == 44.0
-    assert stored["client_longitude"] == 21.0
     assert int(stored["geofence_checked"]) == 0
 
 

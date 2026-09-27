@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
+from datetime import date, timedelta
+
 import app as myapp
 import occupancy as occmod
 
@@ -5,20 +8,21 @@ import occupancy as occmod
 def test_occupancy_reservation(client, db):
 
     room_id = db.room("R1")
+    future_date = (date.today() + timedelta(days=1)).isoformat()
 
     db.reservation(
         room_id=room_id,
-        date="2026-06-22",
+        date=future_date,
         start=2,
         end=4,
         description="meeting",
     )
 
-    r = client.get("/occupancy?date=2026-06-22")
+    r = client.get(f"/occupancy?date={future_date}")
 
     data = r.get_json()
 
-    assert data["date"] == "2026-06-22"
+    assert data["date"] == future_date
     assert str(room_id) in data["rooms"]
 
     events = data["rooms"][str(room_id)]
@@ -31,16 +35,17 @@ def test_occupancy_reservation(client, db):
 
 def test_occupancy_reservation_past_date_cannot_cancel(client, db):
     room_id = db.room("R1")
+    past_date = (date.today() - timedelta(days=1)).isoformat()
 
     db.reservation(
         room_id=room_id,
-        date="2026-03-08",
+        date=past_date,
         start=2,
         end=4,
         description="meeting",
     )
 
-    r = client.get("/occupancy?date=2026-03-08")
+    r = client.get(f"/occupancy?date={past_date}")
     data = r.get_json()
     events = data["rooms"][str(room_id)]
     assert events[0]["can_cancel"] is False
@@ -176,7 +181,7 @@ def test_weekly_session_outside_semester_is_hidden(client, db):
     schedule.room("R1")
     schedule.teacher("Prof", "prof")
     schedule.course("NumericalMethods")
-    past_semester = db.semester(name="Past 2025", start="2025-01-01", end="2025-12-31")
+    past_semester = db.semester(name="2025/26. јесењи", start="2025-10-01", end="2026-02-28")
     session = db.course_session(
         schedule.courses["NumericalMethods"],
         schedule.teachers["Prof"],

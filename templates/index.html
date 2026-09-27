@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 <!DOCTYPE html>
 <html lang="sr">
 <head>
@@ -31,6 +32,7 @@
           <p id="my-reservations-wrap" class="toolbar-link-wrap" style="display:none">
             <a id="my-reservations-link" href="{{ url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
           </p>
+
         </div>
 
         <div class="main-toolbar-row main-toolbar-row-date">
@@ -51,7 +53,7 @@
 
   <script>
     window.APP_CONFIG = {
-        BASE_PATH: "{{ url_for('main.index') }}".replace(/\/$/, "") 
+        BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
     };
   </script>
   <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>

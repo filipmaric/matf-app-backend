@@ -1,6 +1,9 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 import datetime
+import sqlite3
 import time
 import secrets
+import pytest
 
 import app as myapp
 import attendance as attendancemod
@@ -22,8 +25,8 @@ def freeze_now(monkeypatch):
     return fixed_now
 
 
-def test_login_logout_and_whoami(client):
-    r = client.get("/whoami")
+def test_login_logout_and_me(client):
+    r = client.get("/me")
     assert r.get_json() == {"logged_in": False}
 
     r = login(client, "alice")
@@ -33,14 +36,14 @@ def test_login_logout_and_whoami(client):
     assert data["username"] == "alice"
     assert data["role"] == "teacher"
 
-    r = client.get("/whoami")
+    r = client.get("/me")
     assert r.get_json() == {"logged_in": True, "username": "alice"}
 
     r = client.post("/logout")
     assert r.status_code == 200
     assert r.get_json() == {"success": True}
 
-    r = client.get("/whoami")
+    r = client.get("/me")
     assert r.get_json() == {"logged_in": False}
 
 
@@ -50,8 +53,23 @@ def test_login_accepts_teacher_email_username(client):
     assert r.status_code == 200
     assert data["username"] == "alice"
 
-    r = client.get("/whoami")
+    r = client.get("/me")
     assert r.get_json() == {"logged_in": True, "username": "alice"}
+
+
+def test_login_accepts_review_account_without_radius(client, monkeypatch):
+    monkeypatch.setattr(authmod, "REVIEW_MODE", True)
+    monkeypatch.setattr(authmod, "radius_auth", lambda username, password: (_ for _ in ()).throw(AssertionError("RADIUS should not be used for review login")))
+
+    r = login(client, "google", "review")
+    data = r.get_json()
+    assert r.status_code == 200
+    assert data["success"] is True
+    assert data["username"] == "google"
+    assert data["role"] == "teacher"
+
+    r = client.get("/me")
+    assert r.get_json() == {"logged_in": True, "username": "google"}
 
 
 def test_login_failure(client, monkeypatch):
@@ -68,6 +86,18 @@ def test_login_rate_limit(client, monkeypatch):
 
     assert login(client, "alice").status_code == 200
     assert login(client, "alice").status_code == 200
+
+    r = login(client, "alice")
+    assert r.status_code == 429
+    assert r.get_json() == {"error": "Too many requests"}
+
+
+def test_login_rate_limit_is_per_username(client, monkeypatch):
+    monkeypatch.setattr(authmod, "radius_auth", lambda username, password: True)
+    monkeypatch.setitem(myapp.RATE_LIMITS, "login", (1, 60))
+
+    assert login(client, "alice").status_code == 200
+    assert login(client, "bob").status_code == 200
 
     r = login(client, "alice")
     assert r.status_code == 429
@@ -92,15 +122,31 @@ def test_csrf_is_required_for_browser_posts(app):
     assert ok.status_code == 200
 
 
-def test_service_token_routes_are_exempt_from_csrf(app):
+def test_update_calendar_requires_admin_session(app):
     raw_client = app.test_client()
     r = raw_client.post(
         "/update_calendar",
-        json=[{"date": "2026-03-10", "is_working": 1, "week_day": 1}],
-        headers={"Authorization": f"Bearer {myapp.app.config['SERVICE_API_KEY']}"},
+        json=[{"date": "2026-03-10", "kind": "teaching", "week_day": 1}],
+        headers={"Authorization": f"Bearer {myapp.app.config['BACKEND_SERVICE_BEARER_TOKEN']}"},
     )
-    assert r.status_code == 200
-    assert r.get_json() == {"success": True}
+    assert r.status_code == 401
+
+
+def test_teacher_office_cannot_be_reserved(client, db):
+    room_id = db.room(name="Teacher office", type="teacher_office")
+    login(client, "alice")
+
+    response = client.post(
+        "/reserve",
+        json={
+            "room_id": room_id,
+            "date": "2026-03-10",
+            "start_slot": 8,
+            "end_slot": 9,
+        },
+    )
+
+    assert response.status_code == 400
 
 
 def test_is_admin(client, db):
@@ -117,12 +163,12 @@ def test_my_reservations_data_groups_personal_and_courses(client, db):
     login(client, "alice")
 
     current_semester = db.semester(
-        name="Current 2026",
+        name="2026/27. јесењи",
         start="2026-01-01",
         end="2026-12-31",
     )
     past_semester = db.semester(
-        name="Past 2025",
+        name="2025/26. јесењи",
         start="2025-01-01",
         end="2025-12-31",
     )
@@ -159,12 +205,12 @@ def test_my_reservations_data_groups_personal_and_courses(client, db):
         end_slot=12,
     )
     db.execute(
-        "INSERT INTO days (date, is_working, week_day) VALUES (?, ?, ?)",
-        ("2026-03-16", 1, 1),
+        "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+        ("2026-03-16", "teaching", 1),
     )
     db.execute(
-        "INSERT INTO days (date, is_working, week_day) VALUES (?, ?, ?)",
-        ("2026-03-23", 1, 1),
+        "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+        ("2026-03-23", "teaching", 1),
     )
     db.execute(
         """INSERT INTO weekly_cancellations
@@ -191,28 +237,30 @@ def test_my_reservations_data_groups_personal_and_courses(client, db):
         end_slot=14,
     )
     db.execute(
-        "INSERT INTO days (date, is_working, week_day) VALUES (?, ?, ?)",
-        ("2025-03-10", 1, 1),
+        "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+        ("2025-03-10", "teaching", 1),
     )
 
     r = client.get("/my_reservations_data")
     assert r.status_code == 200
     data = r.get_json()
 
-    assert data["selected_semester"]["name"] == "Current 2026"
+    assert data["selected_semester"]["display_name"] == "2026/27. јесењи"
     assert [item["description"] for item in data["personal_reservations"]] == ["current personal"]
     assert [course_item["course_name"] for course_item in data["courses"]] == ["NumericalMethods"]
     assert [session["start_slot"] for session in data["courses"][0]["sessions"]] == [10]
     assert data["courses"][0]["sessions"][0]["instances"] == ["2026-03-09", "2026-03-23"]
 
-    r = client.get(f"/my_reservations_data?semester_id={past_semester}")
-    assert r.status_code == 200
-    past_data = r.get_json()
 
-    assert past_data["selected_semester"]["name"] == "Past 2025"
-    assert [item["description"] for item in past_data["personal_reservations"]] == ["past personal"]
-    assert [session["start_slot"] for session in past_data["courses"][0]["sessions"]] == [12]
-    assert past_data["courses"][0]["sessions"][0]["instances"] == ["2025-03-10"]
+def test_my_reservations_data_rate_limit(client, db, monkeypatch):
+    login(client, "alice")
+    monkeypatch.setitem(myapp.RATE_LIMITS, "my_reservations_data", (1, 60))
+
+    assert client.get("/my_reservations_data").status_code == 200
+
+    r = client.get("/my_reservations_data")
+    assert r.status_code == 429
+    assert r.get_json() == {"error": "Too many requests"}
 
 
 def test_attendance_join_and_roster(client, db, monkeypatch):
@@ -220,7 +268,7 @@ def test_attendance_join_and_roster(client, db, monkeypatch):
     login(client, "alice")
 
     semester = db.semester(
-        name="Current 2026",
+        name="2026/27. јесењи",
         start="2026-01-01",
         end="2026-12-31",
     )
@@ -302,7 +350,7 @@ def test_attendance_spot_check_shortlist_and_flags_unconfirmed(client, db, monke
     login(client, "alice")
 
     semester = db.semester(
-        name="Current 2026",
+        name="2026/27. јесењи",
         start="2026-01-01",
         end="2026-12-31",
     )
@@ -380,7 +428,7 @@ def test_attendance_roster_uses_unknown_fallback(client, db):
     login(client, "alice")
 
     semester = db.semester(
-        name="Current 2026",
+        name="2026/27. јесењи",
         start="2026-01-01",
         end="2026-12-31",
     )
@@ -416,7 +464,7 @@ def test_attendance_blocked_outside_class_window(client, db, monkeypatch):
     login(client, "alice")
 
     semester = db.semester(
-        name="Current 2026",
+        name="2026/27. јесењи",
         start="2026-01-01",
         end="2026-12-31",
     )
@@ -456,7 +504,7 @@ def test_attendance_blocked_outside_class_window(client, db, monkeypatch):
 
 def test_attendance_join_token_rotates_every_8_seconds(db):
     semester = db.semester(
-        name="Current 2026",
+        name="2026/27. јесењи",
         start="2026-01-01",
         end="2026-12-31",
     )
@@ -703,7 +751,7 @@ def test_reserve_success_and_conflicts(client, db, monkeypatch):
 
     teacher = db.teacher("Prof", "prof")
     course = db.course("NumericalMethods")
-    semester = db.semester(name="Spring 2026")
+    semester = db.semester(name="2025/26. пролећни", start="2026-03-23", end="2026-09-30")
     session = db.course_session(course, teacher, semester)
     db.weekly_session(
         session_id=session,
@@ -712,7 +760,7 @@ def test_reserve_success_and_conflicts(client, db, monkeypatch):
         start_slot=12,
         end_slot=14,
     )
-    monkeypatch.setattr(reservationsmod, "check_day", lambda date: (True, 0, 1))
+    monkeypatch.setattr(reservationsmod, "check_day", lambda date: ("teaching", 0, 1))
 
     r = client.post(
         "/reserve",
@@ -728,6 +776,21 @@ def test_reserve_success_and_conflicts(client, db, monkeypatch):
 
     r = client.delete(f"/reservation/{first_id}")
     assert r.status_code == 200
+
+
+def test_database_rejects_overlapping_reservations(client, db):
+    room = db.room("R1")
+    db.reservation(room_id=room, date="2026-06-22", start=8, end=10)
+
+    with pytest.raises(sqlite3.IntegrityError, match="reservation_overlap"):
+        db.execute(
+            """
+            INSERT INTO reservations
+                (room_id, username, date, start_slot, end_slot, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (room, "bob", "2026-06-22", 9, 11, "overlap"),
+        )
 
 
 def test_delete_reservation_current_allowed_until_end_when_no_attendance(client, db, monkeypatch):
@@ -970,6 +1033,10 @@ def test_calendar_and_update_calendar(client, db):
     db.execute("INSERT INTO administrators (username) VALUES (?)", ("admin",))
 
     r = client.get("/calendar_data?month=3&year=2026")
+    assert r.status_code == 401
+
+    login(client, "admin")
+    r = client.get("/calendar_data?month=3&year=2026")
     assert r.status_code == 200
     data = r.get_json()
     assert "calendar" in data
@@ -978,13 +1045,12 @@ def test_calendar_and_update_calendar(client, db):
     r = client.get("/calendar_data?month=13&year=2026")
     assert r.status_code == 400
 
-    login(client, "admin")
     r = client.post(
         "/update_calendar",
         json=[
             {
                 "date": "2026-03-10",
-                "is_working": True,
+                "kind": "teaching",
                 "week_day": 2,
             }
         ],
@@ -992,79 +1058,36 @@ def test_calendar_and_update_calendar(client, db):
     assert r.status_code == 200
     assert r.get_json() == {"success": True}
 
+    r = client.post(
+        "/update_calendar",
+        json=[
+            {
+                "date": "2026-03-12",
+                "kind": "exam",
+                "week_day": -1,
+            }
+        ],
+    )
+    assert r.status_code == 200
+
     client.post("/logout")
     r = client.post(
         "/update_calendar",
-        json=[{"date": "2026-03-11", "is_working": True, "week_day": 3}],
+        json=[{"date": "2026-03-11", "kind": "teaching", "week_day": 3}],
     )
     assert r.status_code == 401
 
 
-def test_service_token_update_calendar(client, db):
-    myapp.RATE_LIMITS["calendar"] = (1, 60)
-    r = client.post(
-        "/update_calendar",
-        headers={"Authorization": f"Bearer {myapp.app.config['SERVICE_API_KEY']}"},
-        json=[
-            {
-                "date": "2026-03-12",
-                "is_working": True,
-                "week_day": 3,
-            }
-        ],
-    )
-    assert r.status_code == 200
-    assert r.get_json() == {"success": True}
+def test_calendar_data_rate_limit(client, db, monkeypatch):
+    db.execute("INSERT INTO administrators (username) VALUES (?)", ("admin",))
+    login(client, "admin")
+    monkeypatch.setitem(myapp.RATE_LIMITS, "calendar_data", (1, 60))
 
-    r = client.post(
-        "/update_calendar",
-        headers={"Authorization": f"Bearer {myapp.app.config['SERVICE_API_KEY']}"},
-        json=[
-            {
-                "date": "2026-03-13",
-                "is_working": True,
-                "week_day": 4,
-            }
-        ],
-    )
-    assert r.status_code == 200
-    assert r.get_json() == {"success": True}
+    assert client.get("/calendar_data?month=3&year=2026").status_code == 200
 
-
-def test_service_token_bulk_reservations(client, db):
-    room1 = db.room("R1")
-    room2 = db.room("A2")
-
-    r = client.post(
-        "/reserve/bulk",
-        headers={"Authorization": f"Bearer {myapp.app.config['SERVICE_API_KEY']}"},
-        json={
-            "reservations": [
-                {
-                    "room_id": room1,
-                    "date": "2026-03-09",
-                    "start_slot": 8,
-                    "end_slot": 10,
-                    "description": "service one",
-                    "username": "service.user",
-                },
-                {
-                    "room_id": room2,
-                    "date": "2026-03-09",
-                    "start_slot": 10,
-                    "end_slot": 12,
-                    "description": "service two",
-                    "username": "service.user",
-                },
-            ]
-        },
-    )
-    assert r.status_code == 201
-    assert r.get_json()["created"] == 2
-
-    occupancy = client.get("/occupancy?date=2026-03-09").get_json()
-    assert occupancy["rooms"][str(room1)][0]["username"] == "service.user"
-    assert occupancy["rooms"][str(room2)][0]["username"] == "service.user"
+    r = client.get("/calendar_data?month=3&year=2026")
+    assert r.status_code == 429
+    assert r.get_json() == {"error": "Too many requests"}
 
 
 def test_reservation_rate_limit(client, db, monkeypatch):
@@ -1115,7 +1138,7 @@ def test_weekly_session_cancel_and_conflict(client, db, monkeypatch):
     login(client, "prof")
     freeze_now(monkeypatch)
     future_date = "2026-06-22"
-    monkeypatch.setattr(reservationsmod, "check_day", lambda date: (True, 0, 1))
+    monkeypatch.setattr(reservationsmod, "check_day", lambda date: ("teaching", 0, 1))
 
     r = client.post(
         "/weekly_session_cancel",
@@ -1158,7 +1181,7 @@ def test_weekly_session_cancel_current_allowed_until_end_when_no_attendance(clie
 
     login(client, "prof")
     freeze_now(monkeypatch)
-    monkeypatch.setattr(reservationsmod, "check_day", lambda date: (True, 0, 1))
+    monkeypatch.setattr(reservationsmod, "check_day", lambda date: ("teaching", 0, 1))
 
     r = client.post(
         "/weekly_session_cancel",
@@ -1190,7 +1213,7 @@ def test_weekly_session_cancel_current_blocked_when_attendance_exists(client, db
 
     login(client, "prof")
     freeze_now(monkeypatch)
-    monkeypatch.setattr(reservationsmod, "check_day", lambda date: (True, 0, 1))
+    monkeypatch.setattr(reservationsmod, "check_day", lambda date: ("teaching", 0, 1))
 
     r = client.post(
         "/weekly_session_cancel",

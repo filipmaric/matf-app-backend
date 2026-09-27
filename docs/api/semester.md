@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `semester`
 
 This module owns the shared semester lookup helpers.

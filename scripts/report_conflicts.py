@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 
 import argparse
 import datetime as dt
 import sqlite3
+import sys
+from pathlib import Path
 
-from timetable_common import (
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from lib.timetable_common import (
     collect_future_conflicts,
     format_conflict,
 )

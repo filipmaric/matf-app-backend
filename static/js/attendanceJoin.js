@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
 import { formatDateDDMMYYYY } from './util.js';
 

@@ -1,7 +1,9 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """SQLite database helpers for the classroom reservation app."""
 
 import hashlib
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -9,6 +11,44 @@ from datetime import datetime, timedelta, timezone
 from flask import g, has_app_context
 
 import config
+
+
+def _ensure_calendar_schema(conn):
+    """Migrate the calendar from is_working to semantic day kinds."""
+    if not _table_exists(conn, "days"):
+        return
+
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(days)").fetchall()
+    }
+    if "kind" not in columns:
+        if "is_working" in columns:
+            conn.executescript(
+                """
+                CREATE TABLE days_new (
+                    date TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT 'non_working'
+                        CHECK(kind IN ('teaching', 'makeup', 'exam', 'colloquium', 'non_working')),
+                    week_day INTEGER NOT NULL DEFAULT -1
+                );
+                INSERT INTO days_new (date, kind, week_day)
+                SELECT date,
+                       CASE WHEN is_working = 1 THEN 'teaching' ELSE 'non_working' END,
+                       week_day
+                FROM days;
+                DROP TABLE days;
+                ALTER TABLE days_new RENAME TO days;
+                """
+            )
+        else:
+            conn.execute(
+                """
+                ALTER TABLE days
+                ADD COLUMN kind TEXT NOT NULL DEFAULT 'non_working'
+                    CHECK(kind IN ('teaching', 'makeup', 'exam', 'colloquium', 'non_working'))
+                """
+            )
 
 
 def _app_module():
@@ -40,6 +80,15 @@ def _database_has_schema(conn):
     return bool(row)
 
 
+def _table_exists(conn, table_name):
+    """Check whether a table already exists in the current database."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
 def _ensure_attendance_schema(conn):
     """Create the attendance tables if they are missing."""
     conn.executescript(
@@ -52,8 +101,6 @@ def _ensure_attendance_schema(conn):
             username TEXT NOT NULL,
             registration_source TEXT NOT NULL DEFAULT 'web' CHECK(registration_source IN ('web', 'android')),
             client_ip TEXT,
-            client_latitude REAL,
-            client_longitude REAL,
             geofence_checked INTEGER NOT NULL DEFAULT 0 CHECK(geofence_checked IN (0,1)),
             failed_attempts_before_success INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -99,10 +146,6 @@ def _ensure_attendance_schema(conn):
         )
     if "client_ip" not in columns:
         conn.execute("ALTER TABLE attendance_records ADD COLUMN client_ip TEXT")
-    if "client_latitude" not in columns:
-        conn.execute("ALTER TABLE attendance_records ADD COLUMN client_latitude REAL")
-    if "client_longitude" not in columns:
-        conn.execute("ALTER TABLE attendance_records ADD COLUMN client_longitude REAL")
     if "geofence_checked" not in columns:
         conn.execute(
             "ALTER TABLE attendance_records ADD COLUMN geofence_checked INTEGER NOT NULL DEFAULT 0"
@@ -154,7 +197,16 @@ def _ensure_mobile_auth_schema(conn):
         CREATE TABLE IF NOT EXISTS mobile_auth_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             radius_username TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            two_factor_enabled INTEGER NOT NULL DEFAULT 0 CHECK(two_factor_enabled IN (0, 1)),
+            two_factor_setup_code TEXT,
+            two_factor_setup_expires_at TEXT,
+            two_factor_link_ticket TEXT,
+            two_factor_link_ticket_expires_at TEXT,
+            two_factor_link_action TEXT,
+            two_factor_created_at TEXT,
+            two_factor_confirmed_at TEXT,
+            two_factor_last_verified_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS mobile_auth_sessions (
@@ -165,6 +217,7 @@ def _ensure_mobile_auth_schema(conn):
             token_hash TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL,
+            last_seen_ip TEXT,
             expires_at TEXT NOT NULL,
             revoked_at TEXT,
             revoked_reason TEXT,
@@ -187,6 +240,73 @@ def _ensure_mobile_auth_schema(conn):
             ON mobile_auth_device_login_policies(last_login_date);
         """
     )
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(mobile_auth_users)").fetchall()
+    }
+    if "two_factor_enabled" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE mobile_auth_users
+            ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0
+            CHECK(two_factor_enabled IN (0, 1))
+            """
+        )
+    if "two_factor_setup_code" not in columns:
+        conn.execute("ALTER TABLE mobile_auth_users ADD COLUMN two_factor_setup_code TEXT")
+    if "two_factor_setup_expires_at" not in columns:
+        conn.execute(
+            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_setup_expires_at TEXT"
+        )
+    if "two_factor_link_ticket" not in columns:
+        conn.execute("ALTER TABLE mobile_auth_users ADD COLUMN two_factor_link_ticket TEXT")
+    if "two_factor_link_ticket_expires_at" not in columns:
+        conn.execute(
+            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_link_ticket_expires_at TEXT"
+        )
+    if "two_factor_link_action" not in columns:
+        conn.execute("ALTER TABLE mobile_auth_users ADD COLUMN two_factor_link_action TEXT")
+    if "two_factor_created_at" not in columns:
+        conn.execute(
+            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_created_at TEXT"
+        )
+    if "two_factor_confirmed_at" not in columns:
+        conn.execute(
+            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_confirmed_at TEXT"
+        )
+    if "two_factor_last_verified_at" not in columns:
+        conn.execute(
+            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_last_verified_at TEXT"
+        )
+
+    session_columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(mobile_auth_sessions)").fetchall()
+    }
+    if "last_seen_ip" not in session_columns:
+        conn.execute("ALTER TABLE mobile_auth_sessions ADD COLUMN last_seen_ip TEXT")
+    conn.commit()
+
+
+def _ensure_mobile_device_schema(conn):
+    """Create the mobile device registration table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS mobile_devices (
+            device_id TEXT PRIMARY KEY,
+            student_username TEXT NOT NULL,
+            device_name TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'android',
+            installation_id TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+            last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mobile_devices_student_enabled
+            ON mobile_devices(student_username, enabled);
+        """
+    )
     conn.commit()
 
 
@@ -202,6 +322,382 @@ def _ensure_student_directory_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_students_student_index
             ON students(student_index);
+        """
+    )
+    conn.commit()
+
+
+def _ensure_subject_schema(conn):
+    """Create the subject master table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INTEGER PRIMARY KEY,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            accreditation INTEGER NOT NULL,
+            module TEXT NOT NULL,
+            year INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(code, accreditation, module)
+        );
+        CREATE INDEX IF NOT EXISTS idx_subjects_code_accreditation_module
+            ON subjects(code, accreditation, module);
+        """
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(subjects)").fetchall()}
+    if "year" not in columns:
+        conn.execute("ALTER TABLE subjects ADD COLUMN year INTEGER NOT NULL DEFAULT 1")
+    conn.commit()
+
+
+def _ensure_semester_schema(conn):
+    """Create the semester table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS semesters (
+            id INTEGER PRIMARY KEY,
+            academic_year_start INTEGER,
+            season TEXT CHECK(season IN ('јесењи', 'пролећни')),
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            CHECK (end_date > start_date),
+            UNIQUE(academic_year_start, season)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_semesters_academic_year_season
+            ON semesters(academic_year_start, season);
+        """
+    )
+    conn.commit()
+
+
+def _ensure_course_subject_schema(conn):
+    """Create the grouped-course to subject relation table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS course_subjects (
+            course_code TEXT NOT NULL,
+            subject_id INTEGER NOT NULL,
+            PRIMARY KEY (course_code, subject_id),
+            FOREIGN KEY (course_code) REFERENCES courses(code) ON DELETE CASCADE,
+            FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_course_subjects_course
+            ON course_subjects(course_code);
+        CREATE INDEX IF NOT EXISTS idx_course_subjects_subject
+            ON course_subjects(subject_id);
+        """
+    )
+    conn.commit()
+
+
+def _ensure_weekly_session_schema(conn):
+    """Create weekly session identity columns and indexes if missing."""
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(weekly_sessions)").fetchall()
+    }
+    if not columns:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_sessions (
+                id INTEGER PRIMARY KEY,
+                session_id INTEGER NOT NULL,
+                meeting_no INTEGER NOT NULL DEFAULT 1,
+                room_id INTEGER NOT NULL,
+                day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+                start_slot INTEGER NOT NULL,
+                end_slot INTEGER NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES course_sessions(id),
+                FOREIGN KEY(room_id) REFERENCES rooms(id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_sessions_session_meeting
+                ON weekly_sessions(session_id, meeting_no);
+            CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
+                ON weekly_sessions(day_of_week, room_id, start_slot);
+            """
+        )
+        conn.commit()
+        return
+
+    if "meeting_no" not in columns:
+        conn.execute(
+            "ALTER TABLE weekly_sessions ADD COLUMN meeting_no INTEGER NOT NULL DEFAULT 1"
+        )
+        session_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT session_id FROM weekly_sessions ORDER BY session_id"
+            ).fetchall()
+        ]
+        for session_id in session_ids:
+            rows = conn.execute(
+                "SELECT id FROM weekly_sessions WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            for meeting_no, row in enumerate(rows, start=1):
+                conn.execute(
+                    "UPDATE weekly_sessions SET meeting_no = ? WHERE id = ?",
+                    (meeting_no, row[0]),
+                )
+
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_sessions_session_meeting
+            ON weekly_sessions(session_id, meeting_no)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
+            ON weekly_sessions(day_of_week, room_id, start_slot)
+        """
+    )
+    conn.commit()
+
+
+def _ensure_course_session_schema(conn):
+    """Add course-session workload fields to existing databases."""
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(course_sessions)").fetchall()
+    }
+    if columns and "weekly_lessons" not in columns:
+        conn.execute(
+            "ALTER TABLE course_sessions ADD COLUMN weekly_lessons REAL NOT NULL DEFAULT 0"
+        )
+        conn.commit()
+
+
+def _ensure_student_enrollment_schema(conn):
+    """Create the semester-scoped student enrollment table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS student_enrollments (
+            id INTEGER PRIMARY KEY,
+            student_username TEXT NOT NULL,
+            semester_id INTEGER NOT NULL,
+            subject_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(student_username, semester_id, subject_id),
+            FOREIGN KEY(student_username) REFERENCES students(username) ON DELETE CASCADE,
+            FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+            FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_student_enrollments_student_semester
+            ON student_enrollments(student_username, semester_id);
+        CREATE INDEX IF NOT EXISTS idx_student_enrollments_semester_subject
+            ON student_enrollments(semester_id, subject_id);
+        """
+    )
+    conn.commit()
+
+
+def _ensure_exam_schedule_schema(conn):
+    """Create the imported exam schedule table if it is missing."""
+    _ensure_building_locations_schema(conn)
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS exam_schedule (
+            id INTEGER PRIMARY KEY,
+            term_code TEXT NOT NULL,
+            course_code TEXT NOT NULL,
+            course_name TEXT NOT NULL,
+            exam_date TEXT NOT NULL,
+            exam_hour INTEGER NOT NULL,
+            location TEXT,
+            imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_exam_schedule_term_date_hour
+            ON exam_schedule(term_code, exam_date, exam_hour);
+        """
+    )
+    conn.execute("DROP INDEX IF EXISTS idx_exam_schedule_term_course_code_accreditation")
+    conn.execute("DROP TRIGGER IF EXISTS trg_exam_schedule_location_insert")
+    conn.execute("DROP TRIGGER IF EXISTS trg_exam_schedule_location_update")
+    conn.execute(
+        """
+        DELETE FROM exam_schedule
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM exam_schedule
+            GROUP BY term_code, course_code
+        )
+        """
+    )
+    current_columns = {row[1] for row in conn.execute("PRAGMA table_info(exam_schedule)").fetchall()}
+    if "accreditation" in current_columns:
+        conn.execute("ALTER TABLE exam_schedule DROP COLUMN accreditation")
+    if "source_course_name" in current_columns:
+        conn.execute("ALTER TABLE exam_schedule RENAME COLUMN source_course_name TO course_name")
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_exam_schedule_location_insert
+        BEFORE INSERT ON exam_schedule
+        WHEN NEW.location IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM building_locations
+                 WHERE building_name = NEW.location
+             )
+        BEGIN
+            SELECT RAISE(ABORT, 'exam_schedule.location must reference an existing building');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_exam_schedule_location_update
+        BEFORE UPDATE OF location ON exam_schedule
+        WHEN NEW.location IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM building_locations
+                 WHERE building_name = NEW.location
+             )
+        BEGIN
+            SELECT RAISE(ABORT, 'exam_schedule.location must reference an existing building');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_exam_schedule_term_course_code_accreditation
+            ON exam_schedule(term_code, course_code)
+        """
+    )
+    conn.commit()
+
+
+def _ensure_exam_term_schema(conn):
+    """Create the imported exam terms table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS exam_terms (
+            term_code TEXT PRIMARY KEY,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            semester_id INTEGER NOT NULL,
+            imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK (end_date >= start_date),
+            FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_exam_terms_semester_end_date
+            ON exam_terms(semester_id, end_date DESC, term_code DESC);
+        CREATE INDEX IF NOT EXISTS idx_exam_terms_end_date
+            ON exam_terms(end_date DESC, term_code DESC);
+        """
+    )
+
+    existing_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(exam_terms)").fetchall()
+    }
+    if "semester_id" not in existing_columns:
+        conn.execute("ALTER TABLE exam_terms ADD COLUMN semester_id INTEGER")
+
+    rows = conn.execute(
+        """
+        SELECT term_code, start_date, end_date
+        FROM exam_terms
+        WHERE semester_id IS NULL
+        """
+    ).fetchall()
+    for row in rows:
+        semester_row = conn.execute(
+            """
+            SELECT id
+            FROM semesters
+            WHERE start_date <= ? AND end_date >= ?
+            ORDER BY start_date DESC, end_date ASC, id DESC
+            LIMIT 1
+            """,
+            (row[1], row[2]),
+        ).fetchone()
+        if semester_row is None:
+            raise ValueError(
+                "Unable to resolve semester for exam term "
+                f"{row[0]} ({row[1]}..{row[2]})"
+            )
+        conn.execute(
+            "UPDATE exam_terms SET semester_id = ? WHERE term_code = ?",
+            (semester_row[0], row[0]),
+        )
+
+    conn.commit()
+
+
+def _ensure_exam_application_schema(conn):
+    """Create the imported exam application table if it is missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS exam_applications (
+            id INTEGER PRIMARY KEY,
+            term_code TEXT NOT NULL,
+            subject_id INTEGER NOT NULL,
+            student_username TEXT NOT NULL,
+            imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(term_code, subject_id, student_username),
+            FOREIGN KEY(student_username) REFERENCES students(username) ON DELETE CASCADE,
+            FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_exam_applications_term_student
+            ON exam_applications(term_code, student_username);
+        CREATE INDEX IF NOT EXISTS idx_exam_applications_subject
+            ON exam_applications(subject_id, term_code);
+        """
+    )
+    conn.commit()
+
+
+def _ensure_notification_schema(conn):
+    """Create the notification tables if they are missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY,
+            source_id TEXT NOT NULL UNIQUE,
+            semester_id INTEGER NOT NULL,
+            course_id INTEGER NOT NULL,
+            teacher_username TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
+            FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+            FOREIGN KEY(teacher_username) REFERENCES teachers(username) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_semester_course_published
+            ON notifications(semester_id, course_id, published_at DESC);
+
+        CREATE TABLE IF NOT EXISTS notification_targets (
+            notification_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            PRIMARY KEY(notification_id, group_id),
+            FOREIGN KEY(notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_targets_group_notification
+            ON notification_targets(group_id, notification_id);
+
+        CREATE TABLE IF NOT EXISTS notification_recipients (
+            notification_id INTEGER NOT NULL,
+            student_username TEXT NOT NULL,
+            delivered_at TEXT NOT NULL DEFAULT (datetime('now')),
+            read_at TEXT,
+            PRIMARY KEY(notification_id, student_username),
+            FOREIGN KEY(notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+            FOREIGN KEY(student_username) REFERENCES students(username) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_recipients_student_read
+            ON notification_recipients(student_username, read_at, notification_id);
+
+        CREATE TABLE IF NOT EXISTS import_state (
+            name TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
         """
     )
     conn.commit()
@@ -254,18 +750,120 @@ def _ensure_room_building_name_schema(conn):
     conn.commit()
 
 
+def _ensure_courses_schema(conn):
+    """Create the course computer-requirement column for older databases."""
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(courses)").fetchall()
+    }
+    if "requires_computers" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE courses
+            ADD COLUMN requires_computers INTEGER NOT NULL DEFAULT 0
+            CHECK(requires_computers IN (0, 1))
+            """
+        )
+    conn.commit()
+
+
+def _ensure_reservation_overlap_schema(conn):
+    """Prevent overlapping reservations for the same room and date."""
+    conn.executescript(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_reservations_no_overlap_insert
+        BEFORE INSERT ON reservations
+        WHEN EXISTS (
+            SELECT 1
+            FROM reservations
+            WHERE room_id = NEW.room_id
+              AND date = NEW.date
+              AND start_slot < NEW.end_slot
+              AND NEW.start_slot < end_slot
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'reservation_overlap');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_reservations_no_overlap_update
+        BEFORE UPDATE OF room_id, date, start_slot, end_slot ON reservations
+        WHEN EXISTS (
+            SELECT 1
+            FROM reservations
+            WHERE id <> NEW.id
+              AND room_id = NEW.room_id
+              AND date = NEW.date
+              AND start_slot < NEW.end_slot
+              AND NEW.start_slot < end_slot
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'reservation_overlap');
+        END;
+        """
+    )
+    conn.commit()
+
+
 def _ensure_extra_schemas(conn):
     """Create the add-on tables used by attendance and Android auth."""
+    _ensure_calendar_schema(conn)
+    _ensure_semester_schema(conn)
+    _ensure_courses_schema(conn)
+    _ensure_subject_schema(conn)
+    _ensure_course_subject_schema(conn)
+    _ensure_weekly_session_schema(conn)
     _ensure_attendance_schema(conn)
     _ensure_mobile_auth_schema(conn)
+    _ensure_mobile_device_schema(conn)
     _ensure_student_directory_schema(conn)
+    _ensure_student_enrollment_schema(conn)
+    _ensure_exam_schedule_schema(conn)
+    _ensure_exam_term_schema(conn)
+    _ensure_exam_application_schema(conn)
+    _ensure_notification_schema(conn)
     _ensure_building_locations_schema(conn)
     _ensure_room_building_name_schema(conn)
+    _ensure_reservation_overlap_schema(conn)
 
 
 def ensure_student_directory_schema(conn):
     """Public helper used by import scripts to ensure the student directory exists."""
     _ensure_student_directory_schema(conn)
+
+
+def ensure_calendar_schema(conn):
+    """Public helper used by calendar import scripts to migrate calendar days."""
+    _ensure_calendar_schema(conn)
+
+
+def ensure_student_enrollment_schema(conn):
+    """Public helper used by import scripts to ensure student enrollments exist."""
+    _ensure_student_enrollment_schema(conn)
+
+
+def ensure_exam_schedule_schema(conn):
+    """Public helper used by import scripts to ensure exam schedules exist."""
+    _ensure_exam_schedule_schema(conn)
+
+
+def ensure_exam_term_schema(conn):
+    """Public helper used by import scripts to ensure exam terms exist."""
+    _ensure_exam_term_schema(conn)
+
+
+def ensure_exam_application_schema(conn):
+    """Public helper used by import scripts to ensure exam applications exist."""
+    _ensure_exam_application_schema(conn)
+
+
+def ensure_notification_schema(conn):
+    """Public helper used by import scripts to ensure notifications exist."""
+    _ensure_notification_schema(conn)
+
+
+def ensure_mobile_device_schema(conn):
+    """Public helper used by push-registration scripts."""
+    _ensure_mobile_device_schema(conn)
 
 
 def building_locations_for_room_building_name(building_name):
@@ -314,6 +912,78 @@ def building_locations_all():
     ]
 
 
+def resolve_exam_location_to_building(cur, raw_location):
+    """Resolve an imported exam location to an existing building name."""
+    normalized = str(raw_location or "").strip()
+    unknown_values = {
+        "",
+        "-",
+        "?",
+        "unknown",
+        "n/a",
+        "na",
+        "n/p",
+        "np",
+        "tbd",
+        "nepoznat",
+        "nepoznata",
+        "nepoznato",
+        "непознат",
+        "непозната",
+        "непознато",
+    }
+    if normalized.lower() in unknown_values:
+        return None
+
+    row = cur.execute(
+        """
+        SELECT building_name
+        FROM building_locations
+        WHERE building_name = ?
+        """,
+        (normalized,),
+    ).fetchone()
+    if row is not None:
+        return row[0]
+
+    row = cur.execute(
+        """
+        SELECT building_name
+        FROM rooms
+        WHERE name = ?
+           OR code = ?
+           OR building_name = ?
+        ORDER BY id
+        LIMIT 1
+        """,
+        (normalized, normalized, normalized),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"Unknown exam location {normalized!r}; expected an existing building or room"
+        )
+
+    building_name = str(row[0] or "").strip()
+    if not building_name:
+        raise ValueError(
+            f"Room {normalized!r} does not have a building name for exam location mapping"
+        )
+
+    building_row = cur.execute(
+        """
+        SELECT building_name
+        FROM building_locations
+        WHERE building_name = ?
+        """,
+        (building_name,),
+    ).fetchone()
+    if building_row is None:
+        raise ValueError(
+            f"Room {normalized!r} maps to building {building_name!r}, but that building is not configured"
+        )
+    return building_name
+
+
 def _utcnow():
     """Return the current UTC timestamp."""
     return datetime.now(timezone.utc)
@@ -338,11 +1008,16 @@ def init_db(conn=None):
     """Initialize the database from schema.sql and add attendance tables."""
     close_conn = False
     if conn is None:
+        os.makedirs(os.path.dirname(_database_path()), exist_ok=True)
         conn = sqlite3.connect(_database_path(), detect_types=sqlite3.PARSE_DECLTYPES)
         close_conn = True
 
     try:
         if _database_has_schema(conn):
+            _ensure_semester_schema(conn)
+            _ensure_courses_schema(conn)
+            _ensure_course_session_schema(conn)
+            _ensure_weekly_session_schema(conn)
             _ensure_extra_schemas(conn)
             return False
 
@@ -352,6 +1027,9 @@ def init_db(conn=None):
 
         with open(schema_path, encoding="utf-8") as f:
             conn.executescript(f.read())
+        _ensure_courses_schema(conn)
+        _ensure_course_session_schema(conn)
+        _ensure_weekly_session_schema(conn)
         _ensure_extra_schemas(conn)
         conn.commit()
         return True
@@ -450,8 +1128,201 @@ def mobile_auth_get_or_create_user(radius_username):
 def mobile_auth_get_user_by_id(user_id):
     """Return a mobile-auth user row by id."""
     return query_db(
-        "SELECT id, radius_username FROM mobile_auth_users WHERE id = ?",
+        "SELECT id, radius_username, two_factor_enabled, two_factor_setup_code, two_factor_setup_expires_at, two_factor_link_ticket, two_factor_link_ticket_expires_at, two_factor_link_action, two_factor_last_verified_at FROM mobile_auth_users WHERE id = ?",
         (user_id,),
+        one=True,
+    )
+
+
+def mobile_auth_get_two_factor_settings(user_id):
+    """Return the stored 2FA state for one mobile-auth user."""
+    return query_db(
+        """
+        SELECT id,
+               radius_username,
+               two_factor_enabled,
+               two_factor_setup_code,
+               two_factor_setup_expires_at,
+               two_factor_link_ticket,
+               two_factor_link_ticket_expires_at,
+               two_factor_link_action,
+               two_factor_created_at,
+               two_factor_confirmed_at,
+               two_factor_last_verified_at
+        FROM mobile_auth_users
+        WHERE id = ?
+        """,
+        (user_id,),
+        one=True,
+    )
+
+
+def mobile_auth_begin_two_factor_setup(user_id, setup_code, setup_expires_at, enabled=False):
+    """Store a fresh unconfirmed 2FA setup code for a mobile-auth user."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_enabled = ?,
+            two_factor_setup_code = ?,
+            two_factor_setup_expires_at = ?,
+            two_factor_link_ticket = NULL,
+            two_factor_link_ticket_expires_at = NULL,
+            two_factor_link_action = NULL,
+            two_factor_created_at = ?,
+            two_factor_confirmed_at = NULL,
+            two_factor_last_verified_at = NULL
+        WHERE id = ?
+        """,
+        (1 if enabled else 0, setup_code, setup_expires_at, now, user_id),
+    )
+    conn.commit()
+
+
+def mobile_auth_confirm_two_factor(user_id):
+    """Mark a stored 2FA setup code as active after a successful verification."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_enabled = 1,
+            two_factor_confirmed_at = ?,
+            two_factor_last_verified_at = ?,
+            two_factor_setup_code = NULL,
+            two_factor_setup_expires_at = NULL,
+            two_factor_link_ticket = NULL,
+            two_factor_link_ticket_expires_at = NULL,
+            two_factor_link_action = NULL
+        WHERE id = ?
+        """,
+        (now, now, user_id),
+    )
+    conn.commit()
+
+
+def mobile_auth_mark_two_factor_verified(user_id):
+    """Record the latest successful 2FA verification timestamp for a user."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_last_verified_at = ?
+        WHERE id = ?
+        """,
+        (now, user_id),
+    )
+    conn.commit()
+
+
+def mobile_auth_clear_two_factor_verification(user_id):
+    """Clear the current 2FA trust window for one mobile-auth user."""
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_last_verified_at = NULL
+        WHERE id = ?
+        """,
+        (user_id,),
+    )
+    conn.commit()
+
+
+def mobile_auth_disable_two_factor(user_id):
+    """Disable 2FA requirements for one mobile-auth user."""
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_enabled = 0,
+            two_factor_last_verified_at = NULL,
+            two_factor_setup_code = NULL,
+            two_factor_setup_expires_at = NULL,
+            two_factor_link_ticket = NULL,
+            two_factor_link_ticket_expires_at = NULL,
+            two_factor_link_action = NULL
+        WHERE id = ?
+        """,
+        (user_id,),
+    )
+    conn.commit()
+
+
+def mobile_auth_clear_two_factor_setup(user_id):
+    """Clear any stored 2FA setup for one mobile-auth user."""
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_enabled = 0,
+            two_factor_setup_code = NULL,
+            two_factor_setup_expires_at = NULL,
+            two_factor_link_ticket = NULL,
+            two_factor_link_ticket_expires_at = NULL,
+            two_factor_link_action = NULL,
+            two_factor_confirmed_at = NULL,
+            two_factor_last_verified_at = NULL
+        WHERE id = ?
+        """,
+        (user_id,),
+    )
+    conn.commit()
+
+
+def mobile_auth_set_two_factor_link_ticket(user_id, link_ticket, link_ticket_expires_at, link_action):
+    """Persist the current link-based 2FA ticket for a user."""
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_link_ticket = ?,
+            two_factor_link_ticket_expires_at = ?,
+            two_factor_link_action = ?
+        WHERE id = ?
+        """,
+        (link_ticket, link_ticket_expires_at, link_action, user_id),
+    )
+    conn.commit()
+
+
+def mobile_auth_clear_two_factor_link_ticket(user_id):
+    """Clear any stored link-based 2FA ticket for one user."""
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE mobile_auth_users
+        SET two_factor_link_ticket = NULL,
+            two_factor_link_ticket_expires_at = NULL,
+            two_factor_link_action = NULL
+        WHERE id = ?
+        """,
+        (user_id,),
+    )
+    conn.commit()
+
+
+def mobile_auth_get_user_by_two_factor_link_ticket(link_ticket):
+    """Return the mobile-auth user row for one active link ticket."""
+    return query_db(
+        """
+        SELECT id,
+               radius_username,
+               two_factor_enabled,
+               two_factor_setup_code,
+               two_factor_setup_expires_at,
+               two_factor_link_ticket,
+               two_factor_link_ticket_expires_at,
+               two_factor_link_action,
+               two_factor_created_at,
+               two_factor_confirmed_at,
+               two_factor_last_verified_at
+        FROM mobile_auth_users
+        WHERE two_factor_link_ticket = ?
+        """,
+        (link_ticket,),
         one=True,
     )
 
@@ -533,21 +1404,21 @@ def mobile_auth_create_session(user_id, device_id, device_name, token_hash, sess
         """
         INSERT INTO mobile_auth_sessions (
             user_id, device_id, device_name, token_hash,
-            created_at, last_seen_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            created_at, last_seen_at, last_seen_ip, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, device_id, device_name, token_hash, created_at, created_at, expires_at),
+        (user_id, device_id, device_name, token_hash, created_at, created_at, None, expires_at),
     )
     conn.commit()
     return mobile_auth_get_session_by_id(int(cur.lastrowid))
 
 
-def mobile_auth_touch_session(session_id):
+def mobile_auth_touch_session(session_id, last_seen_ip=None):
     """Refresh the last-seen timestamp for an Android session."""
     conn = get_db()
     conn.execute(
-        "UPDATE mobile_auth_sessions SET last_seen_at = ? WHERE id = ?",
-        (_isoformat(_utcnow()), session_id),
+        "UPDATE mobile_auth_sessions SET last_seen_at = ?, last_seen_ip = ? WHERE id = ?",
+        (_isoformat(_utcnow()), last_seen_ip, session_id),
     )
     conn.commit()
     return mobile_auth_get_session_by_id(session_id)
@@ -579,6 +1450,121 @@ def mobile_auth_get_session_by_id(session_id):
         "SELECT * FROM mobile_auth_sessions WHERE id = ?",
         (session_id,),
         one=True,
+    )
+
+
+def mobile_device_upsert(student_username, device_id, device_name, installation_id, platform="android"):
+    """Store or update one mobile registration id for a student device."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM mobile_devices WHERE installation_id = ? AND device_id != ?",
+        (installation_id, device_id),
+    )
+    conn.execute(
+        """
+        INSERT INTO mobile_devices (
+            device_id, student_username, device_name, platform, installation_id,
+            enabled, last_seen_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(device_id) DO UPDATE SET
+            student_username = excluded.student_username,
+            device_name = excluded.device_name,
+            platform = excluded.platform,
+            installation_id = excluded.installation_id,
+            enabled = 1,
+            last_seen_at = excluded.last_seen_at,
+            updated_at = excluded.updated_at
+        """,
+        (device_id, student_username, device_name, platform, installation_id, now, now),
+    )
+    conn.commit()
+    return query_db(
+        """
+        SELECT device_id,
+               student_username,
+               device_name,
+               platform,
+               installation_id,
+               enabled,
+               last_seen_at,
+               updated_at
+        FROM mobile_devices
+        WHERE device_id = ?
+        """,
+        (device_id,),
+        one=True,
+    )
+
+
+def mobile_device_delete(device_id):
+    """Remove the stored mobile registration for one device."""
+    conn = get_db()
+    conn.execute("DELETE FROM mobile_devices WHERE device_id = ?", (device_id,))
+    conn.commit()
+
+
+def mobile_device_by_device_id(device_id):
+    """Return one stored mobile registration row by device id."""
+    return query_db(
+        """
+        SELECT device_id,
+               student_username,
+               device_name,
+               platform,
+               installation_id,
+               enabled,
+               last_seen_at,
+               updated_at
+        FROM mobile_devices
+        WHERE device_id = ?
+        """,
+        (device_id,),
+        one=True,
+    )
+
+
+def mobile_device_tokens_for_student(student_username):
+    """Return enabled registrations for one student."""
+    return query_db(
+        """
+        SELECT device_id,
+               student_username,
+               device_name,
+               platform,
+               installation_id,
+               last_seen_at,
+               updated_at
+        FROM mobile_devices
+        WHERE student_username = ?
+          AND enabled = 1
+        ORDER BY updated_at DESC, device_id
+        """,
+        (student_username,),
+    )
+
+
+def mobile_device_tokens_for_students(student_usernames):
+    """Return enabled registrations for multiple students."""
+    usernames = [str(username).strip() for username in student_usernames if str(username).strip()]
+    if not usernames:
+        return []
+    placeholders = ", ".join("?" for _ in usernames)
+    return query_db(
+        f"""
+        SELECT device_id,
+               student_username,
+               device_name,
+               platform,
+               installation_id,
+               last_seen_at,
+               updated_at
+        FROM mobile_devices
+        WHERE student_username IN ({placeholders})
+          AND enabled = 1
+        ORDER BY updated_at DESC, device_id
+        """,
+        tuple(usernames),
     )
 
 
@@ -619,3 +1605,407 @@ def student_identity_for_username(username):
         "student_name": full_name or None,
         "student_label": student_label,
     }
+
+
+def student_enrollment_upsert(student_username, semester_id, subject_id, group_id):
+    """Store one semester-scoped course enrollment for a student."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    conn.execute(
+        """
+        INSERT INTO student_enrollments (
+            student_username, semester_id, subject_id, group_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(student_username, semester_id, subject_id) DO UPDATE SET
+            group_id = excluded.group_id,
+            updated_at = excluded.updated_at
+        """,
+        (student_username, semester_id, subject_id, group_id, now),
+    )
+    conn.commit()
+
+
+def student_enrollments_for_student(student_username, semester_id=None):
+    """Return the enrollments stored for one student, optionally filtered by semester."""
+    if semester_id is None:
+        return query_db(
+            """
+            SELECT se.id,
+                   se.student_username,
+                   se.semester_id,
+                   c.id AS course_id,
+                   se.subject_id,
+                   se.group_id,
+                   se.updated_at,
+                   s.name AS course_name,
+                   c.code AS course_code,
+                   g.name AS group_name
+            FROM student_enrollments se
+            JOIN subjects s ON s.id = se.subject_id
+            LEFT JOIN course_subjects csub ON csub.subject_id = s.id
+            LEFT JOIN courses c ON c.code = csub.course_code
+            JOIN groups g ON g.id = se.group_id
+            WHERE se.student_username = ?
+            ORDER BY se.semester_id, c.code, se.id
+            """,
+            (student_username,),
+        )
+
+    return query_db(
+        """
+        SELECT se.id,
+               se.student_username,
+               se.semester_id,
+               c.id AS course_id,
+               se.subject_id,
+               se.group_id,
+               se.updated_at,
+               s.name AS course_name,
+               c.code AS course_code,
+               g.name AS group_name
+        FROM student_enrollments se
+        JOIN subjects s ON s.id = se.subject_id
+        LEFT JOIN course_subjects csub ON csub.subject_id = s.id
+        LEFT JOIN courses c ON c.code = csub.course_code
+        JOIN groups g ON g.id = se.group_id
+        WHERE se.student_username = ? AND se.semester_id = ?
+        ORDER BY c.code, se.id
+        """,
+        (student_username, semester_id),
+    )
+
+
+def student_timetable_events_for_student(student_username, semester_id):
+    """Return weekly timetable events for one student in one semester."""
+    return query_db(
+        """
+        SELECT DISTINCT se.student_username,
+               se.semester_id,
+               c.id AS course_id,
+               c.code AS course_code,
+               s.name AS course_name,
+               se.subject_id,
+               se.group_id,
+               g.name AS group_name,
+               cs.id AS course_session_id,
+               cs.type AS course_type,
+               t.username AS teacher_username,
+               t.name AS teacher_name,
+               ws.id AS weekly_session_id,
+               ws.room_id,
+               r.name AS room_name,
+               r.code AS room_code,
+               r.building_name AS room_building_name,
+               bl.latitude AS room_latitude,
+               bl.longitude AS room_longitude,
+               ws.day_of_week,
+               ws.start_slot,
+               ws.end_slot
+        FROM student_enrollments se
+        JOIN subjects s ON s.id = se.subject_id
+        JOIN course_subjects csub ON csub.subject_id = s.id
+        JOIN courses c ON c.code = csub.course_code
+        JOIN groups g ON g.id = se.group_id
+        JOIN course_sessions cs
+          ON cs.course_id = c.id
+         AND cs.semester_id = se.semester_id
+        JOIN session_groups sg
+          ON sg.session_id = cs.id
+         AND sg.group_id = se.group_id
+        JOIN teachers t ON t.id = cs.teacher_id
+        JOIN weekly_sessions ws ON ws.session_id = cs.id
+        JOIN rooms r ON r.id = ws.room_id
+        LEFT JOIN building_locations bl ON bl.building_name = r.building_name
+        WHERE se.student_username = ?
+          AND se.semester_id = ?
+        ORDER BY c.code, cs.type, ws.day_of_week, ws.start_slot, ws.id
+        """,
+        (student_username, semester_id),
+    )
+
+
+def _normalize_exam_match_value(value):
+    """Normalize exam schedule values for tolerant matching."""
+    normalized = re.sub(r"[^0-9A-Za-zА-Яа-яЉЊЋЂŽžčćšđ]+", "", str(value or "").strip().lower())
+    return normalized
+
+
+def student_exam_schedule_for_student(student_username, term_code=None, mode="applied"):
+    """Return exam schedule entries relevant for one student."""
+    params = []
+    if mode == "all_subjects":
+        where_clause = "WHERE se.student_username = ?"
+        params.append(student_username)
+        if term_code is not None:
+            where_clause += " AND e.term_code = ?"
+            params.append(term_code)
+        rows = query_db(
+            f"""
+            SELECT DISTINCT e.term_code,
+                   e.course_code AS course_code,
+                   s.id AS subject_id,
+                   s.name AS subject_name,
+                   e.exam_date,
+                   e.exam_hour,
+                   CASE
+                       WHEN EXISTS (
+                           SELECT 1
+                           FROM exam_applications a
+                           WHERE a.student_username = se.student_username
+                             AND a.term_code = e.term_code
+                             AND a.subject_id = se.subject_id
+                       ) THEN 1
+                       ELSE 0
+                   END AS is_applied,
+                   COALESCE(bl_room.building_name, bl_direct.building_name, r.building_name, e.location) AS location,
+                   COALESCE(bl_room.latitude, bl_direct.latitude) AS location_latitude,
+                   COALESCE(bl_room.longitude, bl_direct.longitude) AS location_longitude,
+                   CASE
+                       WHEN bl_room.building_name IS NOT NULL OR bl_direct.building_name IS NOT NULL THEN 1
+                       ELSE 0
+                   END AS location_is_building
+            FROM student_enrollments se
+            JOIN exam_terms et
+              ON et.semester_id = se.semester_id
+            JOIN course_subjects csub
+              ON csub.subject_id = se.subject_id
+            JOIN subjects s
+              ON s.id = se.subject_id
+            JOIN courses c
+              ON c.code = csub.course_code
+            JOIN exam_schedule e
+              ON e.term_code = et.term_code
+             AND e.course_code = c.code
+            LEFT JOIN rooms r
+              ON r.name = e.location OR r.code = e.location
+            LEFT JOIN building_locations bl_room
+              ON bl_room.building_name = r.building_name
+            LEFT JOIN building_locations bl_direct
+              ON bl_direct.building_name = e.location
+            {where_clause}
+            ORDER BY e.exam_date, e.exam_hour, e.term_code, e.course_code, e.id
+            """,
+            params,
+        )
+    else:
+        where_clause = "WHERE a.student_username = ?"
+        params.append(student_username)
+        if term_code is not None:
+            where_clause += " AND a.term_code = ?"
+            params.append(term_code)
+
+        rows = query_db(
+            f"""
+            SELECT DISTINCT e.term_code,
+                   e.course_code AS course_code,
+                   s.id AS subject_id,
+                   s.name AS subject_name,
+                   e.exam_date,
+                   e.exam_hour,
+                   1 AS is_applied,
+                   COALESCE(bl_room.building_name, bl_direct.building_name, r.building_name, e.location) AS location,
+                   COALESCE(bl_room.latitude, bl_direct.latitude) AS location_latitude,
+                   COALESCE(bl_room.longitude, bl_direct.longitude) AS location_longitude,
+                   CASE
+                       WHEN bl_room.building_name IS NOT NULL OR bl_direct.building_name IS NOT NULL THEN 1
+                       ELSE 0
+                   END AS location_is_building
+            FROM exam_applications a
+            JOIN exam_schedule e
+              ON e.term_code = a.term_code
+            JOIN subjects s
+              ON s.id = a.subject_id
+            LEFT JOIN rooms r
+              ON r.name = e.location OR r.code = e.location
+            LEFT JOIN building_locations bl_room
+              ON bl_room.building_name = r.building_name
+            LEFT JOIN building_locations bl_direct
+              ON bl_direct.building_name = e.location
+            {where_clause}
+              AND EXISTS (
+                  SELECT 1
+                  FROM student_enrollments se
+                  JOIN course_subjects csub ON csub.subject_id = s.id
+                  JOIN courses c ON c.code = csub.course_code
+                  JOIN exam_terms et ON et.term_code = a.term_code
+                  WHERE se.student_username = a.student_username
+                    AND se.semester_id = et.semester_id
+                    AND se.subject_id = a.subject_id
+                    AND c.code = e.course_code
+              )
+            ORDER BY e.exam_date, e.exam_hour, e.term_code, e.course_code, e.id
+            """,
+            params,
+        )
+
+    matches = []
+    for row in rows:
+        matches.append(dict(row))
+
+    return matches
+
+
+def exam_terms_all(semester_id=None):
+    """Return available exam terms sorted newest first."""
+    params = []
+    semester_clause = ""
+    if semester_id is not None:
+        semester_clause = "WHERE semester_id = ?"
+        params.append(semester_id)
+    return [
+        dict(row)
+        for row in query_db(
+            """
+            SELECT term_code, start_date, end_date, semester_id, imported_at
+            FROM exam_terms
+            {semester_clause}
+            ORDER BY end_date DESC, term_code DESC
+            """.format(semester_clause=semester_clause),
+            params,
+        )
+    ]
+
+
+def student_notifications_for_student(student_username, semester_id=None, limit=50, offset=0):
+    """Return notifications for one student, optionally filtered by semester."""
+    limit = max(1, min(int(limit or 50), 100))
+    offset = max(0, int(offset or 0))
+    params = [student_username]
+    semester_clause = ""
+    if semester_id is not None:
+        semester_clause = " AND n.semester_id = ?"
+        params.append(semester_id)
+    params.extend([limit, offset])
+    return query_db(
+        f"""
+        SELECT n.id AS notification_id,
+               n.source_id,
+               n.semester_id,
+               n.course_id,
+               c.code AS course_code,
+               c.name AS course_name,
+               n.teacher_username,
+               t.name AS teacher_name,
+               n.title,
+               n.body,
+               n.published_at,
+               n.updated_at,
+               r.delivered_at,
+               r.read_at,
+               group_concat(DISTINCT g.name) AS target_group_names
+        FROM notification_recipients r
+        JOIN notifications n ON n.id = r.notification_id
+        LEFT JOIN courses c ON c.id = n.course_id
+        LEFT JOIN teachers t ON t.username = n.teacher_username
+        LEFT JOIN notification_targets nt ON nt.notification_id = n.id
+        LEFT JOIN groups g ON g.id = nt.group_id
+        WHERE r.student_username = ?{semester_clause}
+        GROUP BY n.id
+        ORDER BY n.published_at DESC, n.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        tuple(params),
+    )
+
+
+def student_notifications_unread_count(student_username, semester_id=None):
+    """Return the unread notification count for one student."""
+    params = [student_username]
+    semester_clause = ""
+    if semester_id is not None:
+        semester_clause = " AND n.semester_id = ?"
+        params.append(semester_id)
+    row = query_db(
+        f"""
+        SELECT COUNT(*) AS unread_count
+        FROM notification_recipients r
+        JOIN notifications n ON n.id = r.notification_id
+        WHERE r.student_username = ?
+          AND r.read_at IS NULL{semester_clause}
+        """,
+        tuple(params),
+        one=True,
+    )
+    return int(row["unread_count"]) if row else 0
+
+
+def student_notification_mark_read(student_username, notification_id):
+    """Mark one notification as read for one student and return the stored row."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE notification_recipients
+        SET read_at = COALESCE(read_at, ?)
+        WHERE student_username = ? AND notification_id = ?
+        """,
+        (now, student_username, notification_id),
+    )
+    conn.commit()
+    return query_db(
+        """
+        SELECT notification_id, student_username, delivered_at, read_at
+        FROM notification_recipients
+        WHERE student_username = ? AND notification_id = ?
+        """,
+        (student_username, notification_id),
+        one=True,
+    )
+
+
+def student_notification_delete(student_username, notification_id):
+    """Delete one notification from one student's inbox."""
+    conn = get_db()
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM notification_recipients
+        WHERE student_username = ? AND notification_id = ?
+        """,
+        (student_username, notification_id),
+    ).fetchone()
+    if row is None:
+        return None
+
+    conn.execute(
+        """
+        DELETE FROM notification_recipients
+        WHERE student_username = ? AND notification_id = ?
+        """,
+        (student_username, notification_id),
+    )
+    conn.commit()
+    return {"notification_id": notification_id, "student_username": student_username}
+
+
+def student_notifications_mark_all_read(student_username, semester_id=None):
+    """Mark all unread notifications for one student as read."""
+    now = _isoformat(_utcnow())
+    conn = get_db()
+    if semester_id is None:
+        cur = conn.execute(
+            """
+            UPDATE notification_recipients
+            SET read_at = COALESCE(read_at, ?)
+            WHERE student_username = ?
+              AND read_at IS NULL
+            """,
+            (now, student_username),
+        )
+    else:
+        cur = conn.execute(
+            """
+            UPDATE notification_recipients
+            SET read_at = COALESCE(read_at, ?)
+            WHERE student_username = ?
+              AND read_at IS NULL
+              AND notification_id IN (
+                  SELECT id
+                  FROM notifications
+                  WHERE semester_id = ?
+              )
+            """,
+            (now, student_username, semester_id),
+        )
+    conn.commit()
+    return cur.rowcount

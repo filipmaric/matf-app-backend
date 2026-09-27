@@ -1,14 +1,18 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Reservation write and cancellation endpoints."""
 
 import datetime
+import sqlite3
 
 from flask import Blueprint, abort, current_app, g, jsonify, render_template, request
 from flask_login import current_user, login_required
 from werkzeug.exceptions import HTTPException
 
 from auth import RATE_LIMITS, check_if_admin, enforce_rate_limit, login_or_service_required
+from calendar_common import is_schedule_day
 from db import execute_db, get_db, query_db
 from occupancy import check_day
+from room_common import is_reservable_room
 
 bp = Blueprint("reservations", __name__)
 
@@ -44,13 +48,15 @@ def _create_single_reservation(data, username, is_service, commit=True):
     if not (isinstance(start, int) and isinstance(end, int) and start < end):
         abort(400, 'invalid slots')
 
-    room = query_db('SELECT id FROM rooms WHERE id = ?', (room_id,), one=True)
+    room = query_db('SELECT id, type FROM rooms WHERE id = ?', (room_id,), one=True)
     if room == None:
         abort(400, f'room not found {room_id}')
+    if not is_reservable_room(room["type"]):
+        abort(400, "room is not reservable")
 
-    (is_working, week_day, dow) = check_day(date)
+    (kind, week_day, dow) = check_day(date)
 
-    if is_working:
+    if is_schedule_day(kind):
         wc_conf = query_db('''
             SELECT 1
             FROM weekly_sessions ws
@@ -78,10 +84,15 @@ def _create_single_reservation(data, username, is_service, commit=True):
     if res_conf:
         abort(409, 'conflict with existing reservation')
 
-    rid = execute_db('''
-        INSERT INTO reservations (room_id, username, date, start_slot, end_slot, description)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (room_id, username, date, start, end, desc), commit=commit)
+    try:
+        rid = execute_db('''
+            INSERT INTO reservations (room_id, username, date, start_slot, end_slot, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (room_id, username, date, start, end, desc), commit=commit)
+    except sqlite3.IntegrityError as exc:
+        if "reservation_overlap" in str(exc):
+            abort(409, 'conflict with existing reservation')
+        raise
 
     return rid
 
@@ -266,8 +277,8 @@ def cancel_weekly_session_for_date():
         return jsonify({'error': 'invalid date format, expected YYYY-MM-DD'}), 400
 
     # resolve working day and weekday index
-    is_working, week_day, dow = check_day(date)
-    if not is_working:
+    kind, week_day, dow = check_day(date)
+    if not is_schedule_day(kind):
         return jsonify({'error': 'selected date is not a working day'}), 400
 
     # verify that this weekly session is active on that date (semester bounds and weekday)

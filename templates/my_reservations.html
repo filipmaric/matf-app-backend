@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 <!DOCTYPE html>
 <html lang="sr">
 <head>
@@ -36,7 +37,7 @@
 
   <script>
     window.APP_CONFIG = {
-        BASE_PATH: "{{ url_for('main.index') }}".replace(/\/$/, "")
+        BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
     };
   </script>
   <script type="module" src="{{ url_for('static', filename='js/myReservations.js') }}"></script>

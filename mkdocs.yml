@@ -1,5 +1,6 @@
-site_name: Classroom Reservation System
-site_description: Documentation for the classroom reservation app
+# Copyright (c) 2026 Filip Marić. See LICENCE.
+site_name: MatF App
+site_description: Documentation for MatF App
 site_url: ""
 theme:
   name: mkdocs

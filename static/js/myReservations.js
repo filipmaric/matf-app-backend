@@ -1,3 +1,4 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
 import { formatDateDDMMYYYY } from './util.js';
 
@@ -37,7 +38,7 @@ function buildMainTimetableUrl(date, roomId = null, hour = null) {
 }
 
 function formatSemesterLabel(semester) {
-    return `${semester.name} (${formatDateDDMMYYYY(semester.start_date)} - ${formatDateDDMMYYYY(semester.end_date)})`;
+    return `${semester.display_name} (${formatDateDDMMYYYY(semester.start_date)} - ${formatDateDDMMYYYY(semester.end_date)})`;
 }
 
 function clearNode(node) {
@@ -590,7 +591,7 @@ async function loadReservations(selectedSemesterId = null) {
     );
 
     if (data.selected_semester) {
-        document.getElementById('page-message').textContent = `Преглед за семестар: ${data.selected_semester.name}`;
+        document.getElementById('page-message').textContent = `Преглед за семестар: ${data.selected_semester.display_name}`;
     } else {
         document.getElementById('page-message').textContent = 'Нема доступних семестара.';
     }
@@ -610,8 +611,8 @@ async function loadReservations(selectedSemesterId = null) {
 
 const App = {
     async init() {
-        const whoami = await API.whoami();
-        if (!whoami.logged_in) {
+        const me = await API.me();
+        if (!me.logged_in) {
             document.getElementById('page-message').textContent = 'Морате бити пријављени да бисте видели своје резервације.';
             document.getElementById('reservations-page').style.display = 'none';
             return;

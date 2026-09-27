@@ -1,41 +1,61 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 document.addEventListener("DOMContentLoaded", async function() {
-    const monthSelect = document.getElementById('month');
-    const yearSelect = document.getElementById('year');
+    const monthLabel = document.getElementById('monthLabel');
+    const previousMonth = document.getElementById('previousMonth');
+    const nextMonth = document.getElementById('nextMonth');
     const calendarDiv = document.getElementById('calendar');
     const saveBtn = document.getElementById('saveBtn');
+    const kindSelect = document.getElementById('kind');
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
-    const currentUsername = 'demo'; // primer, po potrebi uzeti iz session
+    let viewDate = new Date();
 
-    // Popuni mesec i godinu
-    for (let m = 1; m <= 12; m++) monthSelect.append(new Option(m, m));
-    for (let y = 2024; y <= 2026; y++) yearSelect.append(new Option(y, y));
+    function monthTitle(date) {
+        return new Intl.DateTimeFormat('sr-RS', {
+            month: 'long',
+            year: 'numeric'
+        }).format(date);
+    }
 
-    monthSelect.value = new Date().getMonth() + 1;
-    yearSelect.value = new Date().getFullYear();
-
-    let calendarData = {}; // { 'YYYY-MM-DD': { is_working: 1, week_day: 2 } }
+    let calendarData = {}; // { 'YYYY-MM-DD': { kind: 'teaching', week_day: 2 } }
     let holidays = []; 
+    const calendarCache = new Map();
 
     async function loadCalendarData(month, year) {
+	const cacheKey = `${year}-${String(month).padStart(2, '0')}`;
+	if (calendarCache.has(cacheKey)) {
+	    ({calendarData, holidays} = calendarCache.get(cacheKey));
+	    calendarData = {...calendarData};
+	    return;
+	}
 	const res = await fetch(`/calendar_data?month=${month}&year=${year}`);
 	const data = await res.json();
+	if (!res.ok) {
+	    throw new Error(data.error || `Учитавање календара није успело (${res.status})`);
+	}
 	calendarData = data.calendar;
 	holidays = data.holidays;
+	calendarCache.set(cacheKey, {calendarData: {...calendarData}, holidays: [...holidays]});
     }
     
     async function renderCalendar() {
-	const month = parseInt(monthSelect.value);
-	const year = parseInt(yearSelect.value);
+	const month = viewDate.getMonth() + 1;
+	const year = viewDate.getFullYear();
+	monthLabel.textContent = monthTitle(viewDate);
 	
-	await loadCalendarData(month, year); // sada imamo calendarData i holidays
+	try {
+	    await loadCalendarData(month, year); // sada imamo calendarData i holidays
+	} catch (error) {
+	    calendarDiv.textContent = error.message;
+	    return;
+	}
 	
 	calendarDiv.innerHTML = '';
 
 	const firstDay = new Date(year, month - 1, 1).getDay(); // nedelja=0
 	const daysInMonth = new Date(year, month, 0).getDate();
 
-	const days = ["Ned", "Pon", "Uto", "Sre", "Čet", "Pet", "Sub"];
+	const days = ["Нед", "Пон", "Уто", "Сре", "Чет", "Пет", "Суб"];
 	for (let i = 0; i < 7; i++) {
 	    const day = document.createElement('div');
 	    day.innerHTML = days[i];
@@ -55,28 +75,41 @@ document.addEventListener("DOMContentLoaded", async function() {
             td.classList.add('day');
 
             const weekday = new Date(year, month-1, day).getDay();
-	    const item = calendarData[dateStr];
+	    let item = calendarData[dateStr];
+	    let kind = item?.kind || 'non_working';
 
             // Stil i status
-            if (holidays.includes(dateStr)) {
+
+	    if (holidays.includes(dateStr)) {
 		td.classList.add('holiday');
-		calendarData[dateStr] = {'is_working': 0, week_day: -1};
-            } else if (item !== undefined) {
-		td.classList.add(item.is_working ? 'working-day' : 'non-working-day');
+		item = calendarData[dateStr] = {kind: 'non_working', week_day: -1};
+		kind = 'non_working';
+	    } else if (item !== undefined) {
+	    td.classList.add(`${kind}-day`);
+		td.title = dayTitle(day, item, kind);
 		if (item.week_day !== undefined && item.week_day !== -1)
 		    td.classList.add('custom-weekday'); // vizuelni mark
-            } else {
-		td.classList.add('non-working-day');
-		calendarData[dateStr] = {is_working: 0, week_day: -1};
+	    } else {
+		td.classList.add('non_working-day');
+		item = calendarData[dateStr] = {kind: 'non_working', week_day: -1};
+		kind = 'non_working';
             }
 
-            td.textContent = day;
+	    td.textContent = dayLabel(day, item, kind);
 
             td.addEventListener('click', () => {
-		if (holidays.includes(dateStr)) return; // ne može se menjati praznik
-		td.classList.toggle('working-day');
-		td.classList.toggle('non-working-day');
-		calendarData[dateStr] = {'is_working': td.classList.contains('working-day') ? 1 : 0};
+		if (holidays.includes(dateStr)) return; // holidays cannot be changed
+		const kind = kindSelect.value;
+		calendarData[dateStr] = {
+		    kind,
+		    week_day: kind === 'makeup' ? (calendarData[dateStr]?.week_day ?? -1) : -1
+		};
+		for (const dayKind of ['teaching', 'makeup', 'exam', 'colloquium', 'non_working'])
+		    td.classList.remove(`${dayKind}-day`);
+		td.classList.add(`${kind}-day`);
+		td.classList.toggle('custom-weekday', calendarData[dateStr].week_day !== -1);
+		td.textContent = dayLabel(day, calendarData[dateStr], kind);
+		td.title = dayTitle(day, calendarData[dateStr], kind);
             });
 
 	    td.addEventListener('contextmenu', (e) => {
@@ -88,10 +121,21 @@ document.addEventListener("DOMContentLoaded", async function() {
 
             calendarDiv.appendChild(td);
 	}
+
+    function dayLabel(day) {
+	    return String(day);
+    }
+
+    function dayTitle(day, item, kind) {
+	    const kindLabel = kindSelect.options[kindSelect.selectedIndex]?.text || kind;
+	    if (kind === 'makeup' && item?.week_day >= 0 && item.week_day < weekdayNames.length)
+		return `${kindLabel}: надокнађује се ${weekdayNames[item.week_day]}`;
+	    return `${day}: ${kindLabel}`;
+    }
     }
 
     const weekdayMenu = document.getElementById('weekdayMenu');
-    const weekdayNames = ["Pon", "Uto", "Sre", "Čet", "Pet", "Sub", "Ned"];
+    const weekdayNames = ["Пон", "Уто", "Сре", "Чет", "Пет", "Суб", "Нед"];
 
     // otvaranje menija
     function showWeekdayMenu(dateStr, dayElem) {
@@ -103,7 +147,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 
 	// opcija Default
 	const def = document.createElement('div');
-	def.textContent = "Default (real day)";
+	def.textContent = "Подразумевано (стварни дан)";
 	def.onclick = () => {
             calendarData[dateStr].week_day = -1;
             dayElem.classList.remove('custom-weekday');
@@ -146,24 +190,46 @@ document.addEventListener("DOMContentLoaded", async function() {
     document.addEventListener('click', () => hideMenu());
 
     
-    monthSelect.addEventListener('change', renderCalendar);
-    yearSelect.addEventListener('change', renderCalendar);
+    previousMonth.addEventListener('click', async (event) => {
+        event.preventDefault();
+        viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1);
+        await renderCalendar();
+    });
+    nextMonth.addEventListener('click', async (event) => {
+        event.preventDefault();
+        viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
+        await renderCalendar();
+    });
     await renderCalendar();
 
     saveBtn.addEventListener('click', async () => {
 	const updates = Object.entries(calendarData).map(([date, item]) => ({
 	    date,
-	    is_working: item.is_working,
+	    kind: item.kind || 'non_working',
 	    week_day: item.week_day ?? -1
 	}));	
 	// POST request za backend:
-	await fetch('/update_calendar', {
+	const response = await fetch('/update_calendar', {
           method: 'POST',
           headers: {
               'Content-Type':'application/json',
               ...(csrfToken ? {'X-CSRFToken': csrfToken} : {}),
           },
-          body: JSON.stringify(updates)
-	  });
+	          body: JSON.stringify(updates)
+	});
+	let result = {};
+	try {
+	    result = await response.json();
+	} catch (_) {
+	    // The server may return a non-JSON error page.
+	}
+	if (!response.ok) {
+	    alert(result.error || `Чување календара није успело (${response.status})`);
+	    return;
+	}
+	calendarCache.set(`${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}`, {
+	    calendarData: {...calendarData},
+	    holidays: [...holidays],
+	});
     });
 });

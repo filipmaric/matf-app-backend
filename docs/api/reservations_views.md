@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `reservations_views`
 
 This module serves the "My Reservations" page and the semester-scoped JSON model behind it.
@@ -16,6 +17,7 @@ It depends on the shared semester lookup helpers in `semester.py`.
 
 - `GET /my_reservations` shows the HTML page to a logged-in user.
 - `GET /my_reservations_data` requires a logged-in user session.
+- `GET /my_reservations_data` is rate limited per authenticated user.
 
 Main routes:
 

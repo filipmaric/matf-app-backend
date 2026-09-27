@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Attendance QR, challenge, and student check-in routes."""
 
 import datetime
@@ -16,6 +17,7 @@ from config import (
     ATTENDANCE_PREVIOUS_CHALLENGE_ROUNDS,
     ATTENDANCE_SECRET,
     ATTENDANCE_ATTEMPT_TTL,
+    REVIEW_MODE,
 )
 from auth import RATE_LIMITS, check_if_admin, enforce_rate_limit, student_radius_auth
 from db import (
@@ -33,7 +35,37 @@ bp = Blueprint("attendance", __name__)
 
 def attendance_kind_valid(kind):
     """Return True when the attendance kind is a supported event type."""
+    if kind == "review":
+        return REVIEW_MODE
     return kind in {"weekly", "reservation"}
+
+
+def attendance_review_demo_event(now=None):
+    """Return a synthetic attendance event used only for public review testing."""
+    now = now or datetime.datetime.now()
+    start_slot = max(0, min(22, now.hour - 1))
+    end_slot = min(23, start_slot + 2)
+    event_date = now.date().isoformat()
+    return {
+        "event_id": 0,
+        "room_id": 0,
+        "room_name": "Demo sala",
+        "room_building_name": "Demo zgrada",
+        "start_slot": start_slot,
+        "end_slot": end_slot,
+        "day_of_week": now.isoweekday() % 7,
+        "course_id": 0,
+        "course_name": "Demo provera QR prijave",
+        "course_code": "DEMO",
+        "course_type": "p",
+        "teacher_name": "Demo nastavnik",
+        "teacher_username": "review-demo",
+        "semester_display_name": "Demo semestar",
+        "groups": "demo",
+        "is_canceled": 0,
+        "event_date": event_date,
+        "attendance_review_demo": True,
+    }
 
 
 # Attendance challenge code helpers.
@@ -115,6 +147,12 @@ def attendance_code_is_valid(kind, event_id, event_date, code, now=None):
 
 def attendance_event_row(kind, event_id, event_date):
     """Load the lecture or reservation associated with an attendance page."""
+    if kind == "review":
+        row = attendance_review_demo_event()
+        row["event_id"] = event_id
+        row["event_date"] = event_date
+        return row
+
     if kind == "weekly":
         row = query_db(
             """
@@ -131,7 +169,8 @@ def attendance_event_row(kind, event_id, event_date):
                    cs.type AS course_type,
                    t.name AS teacher_name,
                    t.username AS teacher_username,
-                   s.name AS semester_name,
+                   s.academic_year_start AS semester_academic_year_start,
+                   s.season AS semester_season,
                    GROUP_CONCAT(g.name, ',') AS groups,
                    CASE WHEN wxc.id IS NULL THEN 0 ELSE 1 END AS is_canceled
             FROM weekly_sessions ws
@@ -160,7 +199,8 @@ def attendance_event_row(kind, event_id, event_date):
                      cs.type,
                      t.name,
                      t.username,
-                     s.name,
+                     s.academic_year_start,
+                     s.season,
                      wxc.id
             """,
             (event_date, event_id, event_date),
@@ -168,6 +208,16 @@ def attendance_event_row(kind, event_id, event_date):
         )
         data = dict(row) if row else None
         if data:
+            if data.get("semester_academic_year_start") is not None and data.get("semester_season"):
+                data["semester_display_name"] = (
+                    f"{int(data['semester_academic_year_start'])}/"
+                    f"{(int(data['semester_academic_year_start']) + 1) % 100:02d}. "
+                    f"{data['semester_season']}"
+                )
+            else:
+                data["semester_display_name"] = None
+            data.pop("semester_academic_year_start", None)
+            data.pop("semester_season", None)
             data["event_date"] = event_date
         return data
 
@@ -201,6 +251,8 @@ def attendance_event_row(kind, event_id, event_date):
 
 def attendance_can_view(kind, row):
     """Check whether the current logged-in user may inspect the attendance list."""
+    if kind == "review":
+        return True
     if not current_user.is_authenticated:
         return False
     if check_if_admin(current_user.username):
@@ -260,6 +312,9 @@ def attendance_attempt_blocked_message():
 
 def attendance_records_for_event(kind, event_id, event_date):
     """Return the students who have already checked in for an event."""
+    if kind == "review":
+        return []
+
     rows = query_db(
         """
         SELECT ar.id,
@@ -267,8 +322,6 @@ def attendance_records_for_event(kind, event_id, event_date):
                ar.created_at,
                ar.registration_source,
                ar.client_ip,
-               ar.client_latitude,
-               ar.client_longitude,
                ar.geofence_checked,
                ar.failed_attempts_before_success,
                s.student_index,
@@ -304,8 +357,6 @@ def attendance_records_for_event(kind, event_id, event_date):
                 "created_at": row["created_at"],
                 "registration_source": row["registration_source"],
                 "client_ip": row["client_ip"],
-                "client_latitude": row["client_latitude"],
-                "client_longitude": row["client_longitude"],
                 "geofence_checked": bool(row["geofence_checked"]),
                 "failed_attempts_before_success": int(row["failed_attempts_before_success"] or 0),
                 "student_index": student_index or None,
@@ -323,12 +374,13 @@ def attendance_record_student(
     username,
     registration_source="web",
     client_ip=None,
-    client_latitude=None,
-    client_longitude=None,
     geofence_checked=False,
     failed_attempts_before_success=0,
 ):
     """Store one successful attendance check-in for a student."""
+    if kind == "review":
+        return
+
     execute_db(
         """
         INSERT OR IGNORE INTO attendance_records
@@ -339,12 +391,10 @@ def attendance_record_student(
                 username,
                 registration_source,
                 client_ip,
-                client_latitude,
-                client_longitude,
                 geofence_checked,
                 failed_attempts_before_success
             )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             kind,
@@ -353,8 +403,6 @@ def attendance_record_student(
             username,
             registration_source,
             client_ip,
-            client_latitude,
-            client_longitude,
             int(bool(geofence_checked)),
             int(failed_attempts_before_success or 0),
         ),
@@ -1000,6 +1048,24 @@ def attendance_join_view_token(kind, event_id, event_date, token):
     return attendance_make_attempt_response(response, kind, event_id, event_date)
 
 
+@bp.route('/attendance/review-demo')
+def attendance_review_demo_view():
+    """Render the standard teacher attendance page for review access."""
+    if not REVIEW_MODE:
+        abort(404)
+    attendance_cleanup_expired_attempt_failures()
+    row = attendance_review_demo_event()
+    response = make_response(
+        render_template(
+            'attendance_teacher.html',
+            attendance_kind='review',
+            attendance_event_id=row["event_id"],
+            attendance_event_date=row["event_date"],
+        )
+    )
+    return attendance_make_attempt_response(response, 'review', row["event_id"], row["event_date"])
+
+
 
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>/challenge')
 def attendance_challenge_data(kind, event_id, event_date):
@@ -1268,17 +1334,16 @@ def attendance_join_submit(kind, event_id, event_date):
 
     failure_state = attendance_attempt_failure_state_raw(attempt_token) or {}
     attendance_attempt_clear_failures(attempt_token)
-    registration_source = "android" if mobile_session else "web"
-    attendance_record_student(
-        kind,
-        event_id,
-        event_date,
-        username,
-        registration_source=registration_source,
-        client_ip=attendance_client_ip(),
-        client_latitude=latitude,
-        client_longitude=longitude,
-        geofence_checked=geofence_checked,
-        failed_attempts_before_success=int(failure_state.get("failed_attempts") or 0),
-    )
+    if kind != "review":
+        registration_source = "android" if mobile_session else "web"
+        attendance_record_student(
+            kind,
+            event_id,
+            event_date,
+            username,
+            registration_source=registration_source,
+            client_ip=attendance_client_ip(),
+            geofence_checked=geofence_checked,
+            failed_attempts_before_success=int(failure_state.get("failed_attempts") or 0),
+        )
     return jsonify({'success': True, 'username': username})

@@ -1,4 +1,7 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 from datetime import datetime, timedelta
+
+import attendance as attendancemod
 
 
 def login(client, username="alice", password="secret"):
@@ -24,7 +27,9 @@ def test_healthz_route(client):
 def test_calendar_template(client):
     r = client.get("/calendar")
     assert r.status_code == 200
-    assert "Mesec:" in r.get_data(as_text=True)
+    body = r.get_data(as_text=True)
+    assert "Да бисте видели и мењали календар" in body
+    assert "Пријавите се овде" in body
 
 
 def test_my_reservations_template(client):
@@ -72,3 +77,35 @@ def test_attendance_templates(client, db):
     )
     assert r.status_code == 200
     assert "Пријава присуства" in r.get_data(as_text=True)
+
+
+def test_review_demo_uses_student_flow(client, monkeypatch):
+    monkeypatch.setattr(attendancemod, "REVIEW_MODE", True)
+
+    fixed_now = datetime(2026, 8, 14, 10, 0, 0)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now
+            return fixed_now.replace(tzinfo=tz)
+
+    monkeypatch.setattr(attendancemod.datetime, "datetime", FrozenDatetime)
+
+    r = client.get("/attendance/review-demo")
+    assert r.status_code == 200
+
+    body = r.get_data(as_text=True)
+    assert 'id="attendance-root"' in body
+    assert "attendanceTeacher.js" in body
+    assert "Присуство на часу" in body
+    assert 'id="attendance-join-root"' not in body
+
+    review_date = fixed_now.date().isoformat()
+    data = client.get(f"/attendance/review/0/{review_date}/data")
+    assert data.status_code == 200
+    payload = data.get_json()
+    assert isinstance(payload["challenge"]["current_code"], int)
+    assert len(payload["challenge"]["options"]) == 4
+    assert payload["join_token"]

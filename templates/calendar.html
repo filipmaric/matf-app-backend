@@ -1,13 +1,87 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="sr">
 <head>
   <meta charset="UTF-8">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Календар</title>
   <style>
+    body {
+      font-family: sans-serif;
+      margin: 24px;
+    }
+
+    .calendar-message {
+      max-width: 640px;
+      padding: 16px 20px;
+      border: 1px solid #c8c8c8;
+      border-radius: 10px;
+      background: #f7f7f7;
+      margin-bottom: 18px;
+    }
+
+    .calendar-message a {
+      color: #1f5fbf;
+      text-decoration: underline;
+    }
+
+    .calendar-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .month-navigation {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .month-navigation h2 {
+      min-width: 180px;
+      margin: 0;
+      text-align: center;
+      text-transform: capitalize;
+    }
+
+    .month-navigation a {
+      padding: 4px 8px;
+      color: #1f5fbf;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .calendar-legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 12px 0;
+      font-size: 0.9rem;
+    }
+
+    .calendar-legend span::before {
+      content: "";
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 4px;
+      vertical-align: -1px;
+      border: 1px solid #aaa;
+    }
+
+    .legend-teaching::before { background: #b3e6b3; }
+    .legend-makeup::before { background: #ffcc66; }
+    .legend-exam::before { background: #8db5f2; }
+    .legend-colloquium::before { background: #fff2cc; }
+    .legend-non-working::before { background: #e6e6e6; }
+
     #calendar {
-	display: grid;
-	grid-template-columns: repeat(7, 50px);
-	gap: 5px;
-	margin: 10px;
+      display: grid;
+      grid-template-columns: repeat(7, 50px);
+      gap: 5px;
+      margin: 10px 0;
     }
 
     .day {
@@ -47,23 +121,49 @@
 	background: #eee;
     }
 
-    .working-day { background-color: #b3e6b3; }   /* zeleni */
-    .non-working-day { background-color: #e6e6e6; } /* sivi */
+    .teaching-day { background-color: #b3e6b3; }
+    .makeup-day { background-color: #ffcc66; }
+    .exam-day { background-color: #8db5f2; }
+    .colloquium-day { background-color: #fff2cc; }
+    .non_working-day { background-color: #e6e6e6; }
     .weekend { border: 1px solid #999; } /* subota/nedelja */
     .holiday { background-color: #f5b3b3; } /* praznici / izuzeci */
   </style>
-  
-  <script src="{{ url_for('static', filename='js/calendar.js') }}?v=2"></script>
 </head>
 <body>
-<div>
-    <label for="month">Mesec: </label>
-    <select id="month"></select>
-    <label for="year">Godina: </label>
-    <select id="year"></select>
-    <button id="saveBtn">Sačuvaj promene</button>
+{% if not calendar_access %}
+<div class="calendar-message">
+  Да бисте видели и мењали календар, морате бити пријављени као администратор.
+  <a href="{{ url_for('main.index') }}">Пријавите се овде</a>.
 </div>
+{% else %}
+<div class="month-navigation">
+    <a id="previousMonth" href="#" aria-label="Претходни месец">&lt;&lt;</a>
+    <h2 id="monthLabel"></h2>
+    <a id="nextMonth" href="#" aria-label="Следећи месец">&gt;&gt;</a>
+</div>
+<div class="calendar-legend">
+  <span class="legend-teaching">Настава</span>
+  <span class="legend-makeup">Надокнада</span>
+  <span class="legend-exam">Испит</span>
+  <span class="legend-colloquium">Колоквијум</span>
+  <span class="legend-non-working">Нерадан дан</span>
+</div>
+<p>Десни клик на дан бира распоред који се користи за надокнаду.</p>
 <div id="calendar"></div>
+<div class="calendar-controls">
+    <label for="kind">Тип дана: </label>
+    <select id="kind">
+      <option value="teaching">Настава</option>
+      <option value="makeup">Надокнада</option>
+      <option value="exam">Испит</option>
+      <option value="colloquium">Колоквијум</option>
+      <option value="non_working">Нерадан дан</option>
+    </select>
+    <button id="saveBtn">Сачувај промене</button>
+</div>
 <div id="weekdayMenu" class="context-menu"></div>
+<script src="{{ url_for('static', filename='js/calendar.js') }}?v=6"></script>
+{% endif %}
 </body>
 </html>

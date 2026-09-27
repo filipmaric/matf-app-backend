@@ -1,9 +1,11 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Mobile attendance summary endpoints."""
 
 from flask import Blueprint, g, jsonify
 
+from auth import RATE_LIMITS, enforce_rate_limit
 from db import query_db
-from mobile_auth import mobile_auth_get_user_by_id, require_mobile_session
+from mobile_auth import mobile_auth_data_username, mobile_auth_get_user_by_id, require_mobile_session
 from semester import current_semester_id, semester_by_id
 
 
@@ -26,7 +28,7 @@ def attendance_summary_rows(semester_id, radius_username):
             JOIN semesters s ON s.id = cs.semester_id
             JOIN days d
               ON d.date BETWEEN s.start_date AND s.end_date
-             AND d.is_working = 1
+             AND d.kind IN ('teaching', 'makeup')
              AND ws.day_of_week = CASE
                     WHEN d.week_day = -1 THEN ((CAST(strftime('%w', d.date) AS INTEGER) + 6) % 7)
                     ELSE d.week_day
@@ -85,7 +87,16 @@ def attendance_summary_rows(semester_id, radius_username):
 def attendance_history():
     """Return the current-semester attendance summary for the authenticated student."""
     session = g.mobile_auth_session
+    limited = enforce_rate_limit(
+        "mobile_attendance_history",
+        *RATE_LIMITS["mobile_attendance_history"],
+        key=session["user_id"],
+    )
+    if limited is not None:
+        return limited
+
     user = mobile_auth_get_user_by_id(session["user_id"])
+    data_username = mobile_auth_data_username(user["radius_username"])
     semester = semester_by_id(current_semester_id())
     if semester is None:
         return jsonify({"current_semester": None, "summaries": []})
@@ -93,6 +104,6 @@ def attendance_history():
     return jsonify(
         {
             "current_semester": semester,
-            "summaries": [dict(row) for row in attendance_summary_rows(semester["id"], user["radius_username"])],
+            "summaries": [dict(row) for row in attendance_summary_rows(semester["id"], data_username)],
         }
     )

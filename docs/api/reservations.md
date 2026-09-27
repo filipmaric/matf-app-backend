@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `reservations`
 
 This module owns reservation writes and cancellation actions.

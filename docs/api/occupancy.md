@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `occupancy`
 
 This module owns the room list and occupancy read endpoints.
@@ -11,6 +12,8 @@ It exposes:
 
 - Both endpoints are public read routes.
 - `GET /occupancy` requires a `date` query parameter in `YYYY-MM-DD` format.
+- Both endpoints are rate limited to reduce scraping and query bursts.
+- `GET /rooms` and `GET /occupancy` use separate limits.
 
 ## Examples
 
@@ -34,6 +37,6 @@ Fetch the occupancy for one date:
 
 Typical response:
 
-- `{"date": "...", "is_working": true, "week_day": 0, "rooms": {...}}`
+- `{"date": "...", "kind": "teaching", "week_day": 0, "rooms": {...}}`
 
 ::: occupancy

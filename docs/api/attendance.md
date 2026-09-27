@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `attendance`
 
 This module owns the attendance subsystem for both teachers and students.

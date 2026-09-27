@@ -1,8 +1,11 @@
+/* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
 import { formatDateDDMMYYYY } from './util.js';
 
 let pollHandle = null;
 let activeSpotCheck = null;
+let countdownHandle = null;
+let countdownExpiresAt = null;
 
 function buildJoinUrl(kind, eventId, eventDate, token) {
     const basePath = window.APP_CONFIG?.BASE_PATH || '';
@@ -111,6 +114,35 @@ function renderChallenge(root, challenge, event) {
     countdown.className = 'attendance-countdown';
     countdown.textContent = `Преостало: ${challenge.expires_in} секунди`;
     box.appendChild(countdown);
+
+    if (countdownHandle) {
+        clearInterval(countdownHandle);
+        countdownHandle = null;
+    }
+    countdownExpiresAt = Date.now() + (Number(challenge.expires_in) * 1000);
+
+    const updateCountdown = () => {
+        if (!countdown.isConnected) {
+            if (countdownHandle) {
+                clearInterval(countdownHandle);
+                countdownHandle = null;
+            }
+            return;
+        }
+
+        const remainingMs = Math.max(0, countdownExpiresAt - Date.now());
+        const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+        countdown.textContent = `Преостало: ${remainingSeconds} секунди`;
+        code.classList.toggle('attendance-code-danger', remainingSeconds < 3);
+
+        if (remainingSeconds <= 0 && countdownHandle) {
+            clearInterval(countdownHandle);
+            countdownHandle = null;
+        }
+    };
+
+    updateCountdown();
+    countdownHandle = setInterval(updateCountdown, 1000);
 }
 
 function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
@@ -390,6 +422,11 @@ async function refresh(root) {
     const { kind, eventId, eventDate } = root.dataset;
     const data = await API.getAttendanceRoster(kind, eventId, eventDate);
     root.innerHTML = '';
+    if (countdownHandle) {
+        clearInterval(countdownHandle);
+        countdownHandle = null;
+    }
+    countdownExpiresAt = null;
 
     const { left, right } = ensureTeacherLayout(root);
 

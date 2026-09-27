@@ -1,3 +1,4 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
 # `db`
 
 This module owns SQLite connection handling and schema initialization helpers.

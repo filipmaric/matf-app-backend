@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 
-"""Import aktivniStudenti.csv into the local student directory table."""
+"""Import students.csv into the local student directory table."""
 
 import argparse
 import csv
@@ -8,7 +9,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import db as mydb
 
@@ -49,13 +50,13 @@ def load_students(csv_path, encoding="utf-16"):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Import aktivniStudenti.csv into the student directory table."
+        description="Import students.csv into the student directory table."
     )
     parser.add_argument("database", help="SQLite database path")
     parser.add_argument(
         "--csv-file",
-        default=str(Path(__file__).resolve().parents[1] / "aktivniStudenti.csv"),
-        help="Path to aktivniStudenti.csv",
+        required=True,
+        help="Path to students.csv",
     )
     parser.add_argument(
         "--encoding",

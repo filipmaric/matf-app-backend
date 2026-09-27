@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Filip Marić. See LICENCE.
 """Application factory for the classroom reservation system."""
 
 import logging
@@ -8,19 +9,19 @@ from logging.handlers import RotatingFileHandler
 
 from config import (
     APPLICATION_ROOT,
+    BACKEND_SERVICE_BEARER_TOKEN,
     IS_PRODUCTION,
     LOG_FILE,
     MOBILE_AUTH_SESSION_DAYS,
     SECRET_KEY,
 )
 from config import (
-    SERVICE_API_KEY,
     STATIC_URL_PATH,
-    STUDENT_AUTH_BACKEND,
+    STUDENT_AUTH_MODE,
     STUDENT_RADIUS_DICTIONARY,
     STUDENT_RADIUS_SECRET,
     STUDENT_RADIUS_SERVER,
-    TEACHER_AUTH_BACKEND,
+    TEACHER_AUTH_MODE,
     TEACHER_RADIUS_DICTIONARY,
     TEACHER_RADIUS_SECRET,
     TEACHER_RADIUS_SERVER,
@@ -32,17 +33,17 @@ def create_app():
     """Create and configure the Flask application instance."""
     app = Flask(__name__, static_url_path=STATIC_URL_PATH)
     app.config["APPLICATION_ROOT"] = APPLICATION_ROOT
-    app.config["SERVICE_API_KEY"] = SERVICE_API_KEY
+    app.config["BACKEND_SERVICE_BEARER_TOKEN"] = BACKEND_SERVICE_BEARER_TOKEN
     app.config["MOBILE_AUTH_SESSION_DAYS"] = MOBILE_AUTH_SESSION_DAYS
     app.secret_key = SECRET_KEY
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     init_db_app(app)
 
     if IS_PRODUCTION:
-        if TEACHER_AUTH_BACKEND != "radius":
-            raise RuntimeError("TEACHER_AUTH_BACKEND must be radius when APP_ENV=production")
-        if STUDENT_AUTH_BACKEND != "radius":
-            raise RuntimeError("STUDENT_AUTH_BACKEND must be radius when APP_ENV=production")
+        if TEACHER_AUTH_MODE != "radius":
+            raise RuntimeError("TEACHER_AUTH_MODE must be radius when APP_ENV=production")
+        if STUDENT_AUTH_MODE != "radius":
+            raise RuntimeError("STUDENT_AUTH_MODE must be radius when APP_ENV=production")
         for name in (
             "TEACHER_RADIUS_SERVER",
             "TEACHER_RADIUS_SECRET",
