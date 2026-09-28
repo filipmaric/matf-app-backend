@@ -367,6 +367,70 @@ def attendance_records_for_event(kind, event_id, event_date):
     return students
 
 
+def attendance_record_count_for_event(kind, event_id, event_date):
+    """Return only the number of students who checked in for an event."""
+    if kind == "review":
+        return 0
+
+    row = query_db(
+        """
+        SELECT COUNT(*) AS student_count
+        FROM attendance_records
+        WHERE event_kind = ?
+          AND event_id = ?
+          AND event_date = ?
+        """,
+        (kind, event_id, event_date),
+        one=True,
+    )
+    return int(row["student_count"]) if row else 0
+
+
+def attendance_summary_for_dates(kind, event_id, event_dates):
+    """Return one attendance total per student across the supplied dates."""
+    if kind == "review" or not event_dates:
+        return []
+
+    placeholders = ", ".join("?" for _ in event_dates)
+    rows = query_db(
+        f"""
+        SELECT ar.username,
+               COUNT(*) AS attendance_count,
+               MIN(ar.registration_source) AS registration_source,
+               MIN(ar.client_ip) AS client_ip,
+               MIN(s.student_index) AS student_index,
+               MIN(s.surname) AS surname,
+               MIN(s.given_name) AS given_name
+        FROM attendance_records ar
+        LEFT JOIN students s ON s.username = ar.username
+        WHERE ar.event_kind = ?
+          AND ar.event_id = ?
+          AND ar.event_date IN ({placeholders})
+        GROUP BY ar.username
+        ORDER BY s.surname, s.given_name, ar.username
+        """,
+        (kind, event_id, *event_dates),
+    )
+    summary = []
+    for row in rows:
+        given_name = (row["given_name"] or "").strip()
+        surname = (row["surname"] or "").strip()
+        full_name = " ".join(part for part in (given_name, surname) if part).strip()
+        student_index = (row["student_index"] or "").strip()
+        summary.append(
+            {
+                "username": row["username"],
+                "student_name": full_name or None,
+                "student_index": student_index or None,
+                "attendance_count": int(row["attendance_count"]),
+                "count": int(row["attendance_count"]),
+                "registration_source": row["registration_source"] or "",
+                "client_ip": row["client_ip"] or "",
+            }
+        )
+    return summary
+
+
 def attendance_record_student(
     kind,
     event_id,
@@ -1137,9 +1201,17 @@ def attendance_roster_data(kind, event_id, event_date):
     open_now = attendance_is_open_now(row)
     geofence_state = attendance_geofence_state_for_event(kind, event_id, event_date, row=row)
 
-    return jsonify({
+    summary_only = request.args.get("summary", "").casefold() in {"1", "true", "yes"}
+    students = [] if summary_only else attendance_records_for_event(kind, event_id, event_date)
+    student_count = (
+        attendance_record_count_for_event(kind, event_id, event_date)
+        if summary_only
+        else len(students)
+    )
+    payload = {
         'event': row,
-        'students': attendance_records_for_event(kind, event_id, event_date),
+        'students': students,
+        'student_count': student_count,
         'can_view': True,
         'attendance_open': open_now,
         'attendance_geofence_available': geofence_state["available"],
@@ -1153,7 +1225,35 @@ def attendance_roster_data(kind, event_id, event_date):
             if open_now
             else {}
         ),
-    })
+    }
+    return jsonify(payload)
+
+
+@bp.route('/attendance/<kind>/<int:event_id>/summary')
+def attendance_summary_data(kind, event_id):
+    """Return aggregated attendance totals for a weekly event across dates."""
+    if kind != "weekly" or not attendance_kind_valid(kind):
+        abort(404)
+
+    event_dates = list(dict.fromkeys(request.args.getlist("date")))
+    if not event_dates:
+        return jsonify({"error": "at least one date is required"}), 400
+
+    for event_date in event_dates:
+        row = attendance_event_row(kind, event_id, event_date)
+        if not row:
+            return jsonify({"error": "event not found"}), 404
+        if not attendance_can_view(kind, row):
+            return jsonify({"error": "Forbidden"}), 403
+
+    return jsonify(
+        {
+            "event_id": event_id,
+            "event_kind": kind,
+            "dates": event_dates,
+            "students": attendance_summary_for_dates(kind, event_id, event_dates),
+        }
+    )
 
 
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>/geofence', methods=['POST'])

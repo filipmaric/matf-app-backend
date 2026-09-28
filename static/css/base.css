@@ -623,6 +623,9 @@ body {
     cursor: pointer;
     font-weight: 700;
     list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .attendance-collapsible > summary::-webkit-details-marker {
@@ -631,7 +634,7 @@ body {
 
 .attendance-collapsible > summary::after {
     content: '▸';
-    float: right;
+    margin-left: auto;
     color: #666;
 }
 
@@ -641,6 +644,12 @@ body {
 
 .attendance-collapsible > *:not(summary) {
     margin-top: 12px;
+}
+
+.attendance-collapsible.attendance-summary > summary {
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e7e7e7;
 }
 
 .attendance-summary h4 {
@@ -655,6 +664,10 @@ body {
 
 .attendance-session-block h4 {
     margin: 0 0 10px;
+}
+
+.attendance-collapsible.attendance-summary > div > div > .attendance-session-block:first-child {
+    margin-top: 10px;
 }
 
 .attendance-session-actions {
@@ -674,11 +687,24 @@ body {
     text-align: left;
 }
 
+.attendance-dialog th:nth-child(2),
+.attendance-dialog td:nth-child(2),
+.attendance-dialog th:nth-child(3),
+.attendance-dialog td:nth-child(3) {
+    text-align: center;
+}
+
 .attendance-summary-list {
     list-style: none;
     padding: 0;
     margin: 0;
     display: grid;
+    gap: 10px;
+}
+
+.attendance-summary-list > li {
+    display: flex;
+    align-items: center;
     gap: 10px;
 }
 
@@ -691,6 +717,18 @@ body {
     border: 1px solid #e0e0e0;
     border-radius: 6px;
     background: #fafafa;
+}
+
+.attendance-summary-details {
+    padding: 10px 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    background: #fafafa;
+}
+
+.attendance-summary-details > summary .attendance-summary-count {
+    font-weight: 400;
+    white-space: nowrap;
 }
 
 .attendance-summary-date {
@@ -719,7 +757,17 @@ body {
 }
 
 .attendance-summary-btn {
-    margin-left: auto;
+    display: block;
+    width: fit-content;
+    margin-left: 0;
+    margin-top: 16px;
+    margin-bottom: 16px;
+}
+
+.attendance-download-btn {
+    display: block;
+    width: fit-content;
+    margin-top: 16px;
 }
 
 .attendance-roster li,
@@ -956,7 +1004,16 @@ body {
 }
 
 .attendance-dialog-download {
+    display: block;
+    width: fit-content;
     white-space: nowrap;
+    align-self: flex-start;
+    margin-top: 16px;
+}
+
+.attendance-dialog-body {
+    display: flex;
+    flex-direction: column;
 }
 
 /* ==========================================================================

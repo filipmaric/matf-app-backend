@@ -19,6 +19,8 @@ Main routes:
 - `GET /attendance/<kind>/<id>/<date>/join`
 - `GET /attendance/<kind>/<id>/<date>/challenge`
 - `GET /attendance/<kind>/<id>/<date>/data`
+- `GET /attendance/<kind>/<id>/<date>/data?summary=1`
+- `GET /attendance/weekly/<id>/summary?date=...&date=...`
 - `POST /attendance/<kind>/<id>/<date>/join`
 
 ## Access Notes
@@ -37,6 +39,22 @@ Teacher attendance data:
 curl -i -b cookies.txt \
   http://127.0.0.1:5000/attendance/weekly/51/2026-06-01/data
 ```
+
+Attendance count only:
+
+```bash
+curl -i -b cookies.txt \
+  "http://127.0.0.1:5000/attendance/weekly/51/2026-06-01/data?summary=1"
+```
+
+The `summary=1` variant performs the same access checks but returns
+`student_count` and an empty `students` array. The normal endpoint returns the
+full student list.
+
+The weekly summary endpoint performs the aggregation on the server and returns
+one attendance total per student across the supplied dates. It is used by the
+lazy course-attendance summary, while the full roster remains available for
+each individual date.
 
 Student challenge payload:
 

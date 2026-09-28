@@ -13,6 +13,18 @@ It is read-only and focuses on:
 
 It depends on the shared semester lookup helpers in `semester.py`.
 
+The browser page uses layered lazy attendance loading. Opening the page fetches
+only the reservation and weekly-session model, and the course list is displayed
+immediately. Personal-reservation records intentionally contain no attendance
+data. Opening the personal-attendance section calls
+`GET /my_reservations_attendance_data` once and adds the attendance counts to
+the displayed reservations. Opening a course's attendance section calls
+`GET /my_course_attendance_data?course_id=...`; that response contains only
+the selected course's held dates and `attendance_counts` keyed by date.
+The detailed student list for one reservation or one weekly term is fetched
+only when that specific row is expanded. The optional summary action requests
+a server-side aggregate and does not download the full roster for every date.
+
 ## Access Notes
 
 - `GET /my_reservations` shows the HTML page to a logged-in user.
@@ -23,6 +35,8 @@ Main routes:
 
 - `GET /my_reservations`
 - `GET /my_reservations_data`
+- `GET /my_reservations_attendance_data`
+- `GET /my_course_attendance_data?semester_id=...&course_id=...`
 
 ## Examples
 

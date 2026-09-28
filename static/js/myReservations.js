@@ -79,6 +79,28 @@ function downloadTextFile(filename, content, mimeType = 'text/csv;charset=utf-8'
     URL.revokeObjectURL(url);
 }
 
+function createAttendanceDownloadButton(date, students) {
+    const link = document.createElement('a');
+    link.href = '#';
+    link.className = 'attendance-download-btn';
+    link.textContent = 'Преузми CSV';
+    link.addEventListener('click', (event) => {
+        event.preventDefault();
+        const csv = buildAttendanceSummaryCsv(
+            students.map((student) => ({
+                student_name: student.student_name,
+                student_index: student.student_index,
+                count: 1,
+                registration_source: student.registration_source || '',
+                client_ip: student.client_ip || '',
+            })),
+        );
+        const safeDate = String(date).replace(/[^0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'datum';
+        downloadTextFile(`prisustvo_${safeDate}.csv`, csv);
+    });
+    return link;
+}
+
 function renderEmptyMessage(container, message) {
     clearNode(container);
     const p = document.createElement('p');
@@ -133,21 +155,28 @@ function ensureAttendanceDialog() {
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'attendance-dialog-close';
-    closeButton.textContent = 'Затвори';
+    closeButton.textContent = '×';
+    closeButton.setAttribute('aria-label', 'Затвори');
+    closeButton.title = 'Затвори';
     closeButton.addEventListener('click', () => dialog.close());
     actions.appendChild(closeButton);
-
-    const downloadButton = document.createElement('button');
-    downloadButton.type = 'button';
-    downloadButton.className = 'attendance-dialog-download';
-    downloadButton.textContent = 'Преузми CSV';
-    downloadButton.hidden = true;
-    actions.appendChild(downloadButton);
 
     header.appendChild(actions);
 
     const body = document.createElement('div');
     body.id = 'attendance-dialog-body';
+    body.className = 'attendance-dialog-body';
+
+    const content = document.createElement('div');
+    content.id = 'attendance-dialog-content';
+    body.appendChild(content);
+
+    const downloadButton = document.createElement('a');
+    downloadButton.href = '#';
+    downloadButton.className = 'attendance-dialog-download';
+    downloadButton.textContent = 'Преузми CSV';
+    downloadButton.hidden = true;
+    body.appendChild(downloadButton);
 
     dialog.appendChild(header);
     dialog.appendChild(body);
@@ -159,16 +188,18 @@ function openAttendanceDialog(date, students) {
     const dialog = ensureAttendanceDialog();
     const title = dialog.querySelector('#attendance-dialog-title');
     const subtitle = dialog.querySelector('#attendance-dialog-subtitle');
-    const body = dialog.querySelector('#attendance-dialog-body');
+    const body = dialog.querySelector('#attendance-dialog-content');
     const downloadButton = dialog.querySelector('.attendance-dialog-download');
 
     title.textContent = `Присутност за ${formatDateDDMMYYYY(date)}`;
     subtitle.textContent = '';
     downloadButton.hidden = students.length === 0;
+    downloadButton.style.display = students.length ? 'block' : 'none';
     if (students.length > 0) {
         downloadButton.textContent = 'Преузми CSV';
-        downloadButton.onclick = () => {
-                const csv = buildAttendanceSummaryCsv(
+        downloadButton.onclick = (event) => {
+            event.preventDefault();
+            const csv = buildAttendanceSummaryCsv(
                     students.map((student) => ({
                         student_name: student.student_name,
                         student_index: student.student_index,
@@ -208,14 +239,16 @@ function openAttendanceSummaryDialog(courseLabel, sessionLabel, summaryEntries) 
     const dialog = ensureAttendanceDialog();
     const title = dialog.querySelector('#attendance-dialog-title');
     const subtitle = dialog.querySelector('#attendance-dialog-subtitle');
-    const body = dialog.querySelector('#attendance-dialog-body');
+    const body = dialog.querySelector('#attendance-dialog-content');
     const downloadButton = dialog.querySelector('.attendance-dialog-download');
 
     title.textContent = 'Сажетак присуства';
     subtitle.textContent = `${courseLabel} - ${sessionLabel}`;
     downloadButton.hidden = summaryEntries.length === 0;
+    downloadButton.style.display = summaryEntries.length ? 'block' : 'none';
     if (summaryEntries.length > 0) {
-        downloadButton.onclick = () => {
+        downloadButton.onclick = (event) => {
+            event.preventDefault();
             const csv = buildAttendanceSummaryCsv(summaryEntries);
             const safeCourse = courseLabel.replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '') || 'kurs';
             const safeSession = sessionLabel.replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '') || 'termin';
@@ -325,16 +358,8 @@ async function renderPersonalAttendanceSummary(container, reservations) {
     const summary = document.createElement('section');
     summary.className = 'attendance-summary';
 
-    const details = document.createElement('details');
-    details.className = 'attendance-collapsible';
-
-    const summaryTitle = document.createElement('summary');
-    summaryTitle.textContent = 'Присутност по личној резервацији';
-    details.appendChild(summaryTitle);
-
     const list = document.createElement('ul');
     list.className = 'attendance-summary-list';
-    details.appendChild(list);
 
     const entries = await Promise.all(reservations.map(async (reservation) => {
         const data = await API.getAttendanceRoster('reservation', reservation.id, reservation.date);
@@ -377,8 +402,237 @@ async function renderPersonalAttendanceSummary(container, reservations) {
         list.appendChild(item);
     });
 
-    summary.appendChild(details);
+    summary.appendChild(list);
     return summary;
+}
+
+async function renderPersonalAttendanceByTerm(reservations) {
+    const summary = document.createElement('section');
+    summary.className = 'attendance-summary';
+
+    const list = document.createElement('div');
+    list.className = 'attendance-summary-list';
+    summary.appendChild(list);
+
+    const entries = reservations.map((reservation) => {
+        const details = document.createElement('details');
+        details.className = 'attendance-collapsible attendance-summary-details';
+
+        const detailsSummary = document.createElement('summary');
+        const label = document.createElement('span');
+        label.textContent = formatDateDDMMYYYY(reservation.date)
+            + ' · ' + reservation.room_name;
+        detailsSummary.appendChild(label);
+
+        const count = document.createElement('span');
+        count.className = 'attendance-summary-count';
+        count.textContent = '(' + reservation.attendance_count + ' присутних)';
+        detailsSummary.appendChild(count);
+        details.appendChild(detailsSummary);
+
+        const content = document.createElement('div');
+        details.appendChild(content);
+
+        let loaded = false;
+        details.addEventListener('toggle', async () => {
+            if (!details.open || loaded) return;
+            loaded = true;
+            content.textContent = 'Учитавање присуства...';
+            try {
+                const data = await API.getAttendanceRoster(
+                    'reservation',
+                    reservation.id,
+                    reservation.date,
+                );
+                clearNode(content);
+                if (!data.students.length) {
+                    content.textContent = 'Нема регистрованих студената.';
+                    return;
+                }
+
+                const students = document.createElement('ul');
+                students.className = 'attendance-summary-list';
+                data.students.forEach((student) => {
+                    students.appendChild(createAttendanceListItem(student));
+                });
+                content.appendChild(students);
+                content.appendChild(createAttendanceDownloadButton(reservation.date, data.students));
+            } catch (error) {
+                loaded = false;
+                content.textContent = error.message || 'Грешка при учитавању присуства.';
+            }
+        });
+
+        return { details, count, reservation };
+    });
+
+    entries.forEach((entry) => list.appendChild(entry.details));
+    return summary;
+}
+
+function createLazyAttendanceTerm(kind, eventId, date, roomId, startSlot, studentCount) {
+    const details = document.createElement('details');
+    details.className = 'attendance-collapsible attendance-summary-details';
+
+    const summary = document.createElement('summary');
+    const label = document.createElement('span');
+    label.textContent = formatDateDDMMYYYY(date);
+    summary.appendChild(label);
+
+    const count = document.createElement('span');
+    count.className = 'attendance-summary-count';
+    count.textContent = '(' + studentCount + ' присутних)';
+    summary.appendChild(count);
+    details.appendChild(summary);
+
+    const content = document.createElement('div');
+    details.appendChild(content);
+
+    let loaded = false;
+    details.addEventListener('toggle', async () => {
+        if (!details.open || loaded) return;
+        loaded = true;
+        content.textContent = 'Учитавање присуства...';
+        try {
+            const data = await API.getAttendanceRoster(kind, eventId, date);
+            clearNode(content);
+            if (!data.students.length) {
+                content.textContent = 'Нема регистрованих студената.';
+                return;
+            }
+
+            const students = document.createElement('ul');
+            students.className = 'attendance-summary-list';
+            data.students.forEach((student) => {
+                students.appendChild(createAttendanceListItem(student));
+            });
+            content.appendChild(students);
+            content.appendChild(createAttendanceDownloadButton(date, data.students));
+        } catch (error) {
+            loaded = false;
+            content.textContent = error.message || 'Грешка при учитавању присуства.';
+        }
+    });
+    return details;
+}
+
+function renderCourseAttendance(course) {
+    const container = document.createElement('div');
+    const courseLabel = course.course_name;
+
+    course.sessions.forEach((session) => {
+        const block = document.createElement('section');
+        block.className = 'attendance-session-block';
+
+        const sessionLabel = [
+            DAY_NAMES[session.day_of_week] || '',
+            formatHourRange(session.start_slot, session.end_slot),
+            session.room_name,
+            formatCourseType(session.course_type),
+        ].filter(Boolean).join(' · ');
+
+        const heading = document.createElement('h4');
+        heading.textContent = sessionLabel;
+        block.appendChild(heading);
+
+        const summaryLink = document.createElement('a');
+        summaryLink.href = '#';
+        summaryLink.className = 'attendance-summary-btn';
+        summaryLink.textContent = 'Сажетак присуства';
+        summaryLink.addEventListener('click', async (event) => {
+            event.preventDefault();
+            if (summaryLink.dataset.loading) return;
+            summaryLink.dataset.loading = 'true';
+            try {
+                const data = await API.getAttendanceSummary(
+                    'weekly',
+                    session.weekly_session_id,
+                    session.instances || [],
+                );
+                openAttendanceSummaryDialog(
+                    courseLabel,
+                    sessionLabel,
+                    data.students || [],
+                );
+            } finally {
+                delete summaryLink.dataset.loading;
+            }
+        });
+        block.appendChild(summaryLink);
+
+        const list = document.createElement('div');
+        list.className = 'attendance-summary-list';
+        (session.instances || []).forEach((date) => {
+            list.appendChild(createLazyAttendanceTerm(
+                'weekly',
+                session.weekly_session_id,
+                date,
+                session.room_id,
+                session.start_slot,
+                (session.attendance_counts || {})[date] || 0,
+            ));
+        });
+        block.appendChild(list);
+        container.appendChild(block);
+    });
+    return container;
+}
+
+function renderCourseOverview(container, courses, semesterId) {
+    clearNode(container);
+    if (!courses.length) {
+        renderEmptyMessage(container, 'Нема предмета у изабраном семестру.');
+        return;
+    }
+
+    courses.forEach((course) => {
+        const card = document.createElement('article');
+        card.className = 'course-card';
+
+        const title = document.createElement('h3');
+        title.textContent = course.course_name;
+        card.appendChild(title);
+
+        const table = document.createElement('table');
+        const headerRow = document.createElement('tr');
+        ['Дан', 'Сала', 'Време', 'Тип', 'Наставник', 'Групе'].forEach((label) => {
+            const th = document.createElement('th');
+            th.textContent = label;
+            headerRow.appendChild(th);
+        });
+        const thead = document.createElement('thead');
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        course.sessions.forEach((session) => {
+            const row = document.createElement('tr');
+            [
+                DAY_NAMES[session.day_of_week] || '',
+                session.room_name,
+                formatHourRange(session.start_slot, session.end_slot),
+                formatCourseType(session.course_type),
+                session.teacher_name,
+                session.groups.length ? session.groups.join(', ') : '',
+            ].forEach((value) => {
+                const cell = document.createElement('td');
+                cell.textContent = value;
+                row.appendChild(cell);
+            });
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        card.appendChild(table);
+
+        card.appendChild(createLazyAttendanceLoader('Присутност по термину', async () => {
+            const data = await API.getMyCourseAttendance(semesterId, course.course_id);
+            const detailedCourse = (data.courses || []).find(
+                (item) => item.course_id === course.course_id,
+            );
+            return renderCourseAttendance(detailedCourse || course);
+        }));
+        container.appendChild(card);
+    });
 }
 
 async function renderCourseSessions(container, courses) {
@@ -440,7 +694,7 @@ async function renderCourseSessions(container, courses) {
 
         const courseLabel = course.course_name;
 
-        const sessionBlocks = await Promise.all(course.sessions.map(async (session) => {
+        const sessionBlocks = course.sessions.map((session) => {
             const block = document.createElement('section');
             block.className = 'attendance-session-block';
 
@@ -454,6 +708,9 @@ async function renderCourseSessions(container, courses) {
             heading.textContent = sessionLabel;
             block.appendChild(heading);
 
+            const instances = session.instances || [];
+            let attendanceLoading = null;
+
             const actions = document.createElement('div');
             actions.className = 'attendance-session-actions';
 
@@ -461,17 +718,25 @@ async function renderCourseSessions(container, courses) {
             summaryButton.type = 'button';
             summaryButton.className = 'attendance-summary-btn';
             summaryButton.textContent = 'Сажетак присуства';
-            summaryButton.addEventListener('click', () => {
-                const summaryEntries = Array.from(attendanceTotals.values()).sort((a, b) => {
-                    if (b.count !== a.count) return b.count - a.count;
-                    return a.username.localeCompare(b.username);
-                });
-                openAttendanceSummaryDialog(courseLabel, sessionLabel, summaryEntries);
+            summaryButton.addEventListener('click', async () => {
+                if (!attendanceLoading) {
+                    attendanceLoading = API.getAttendanceSummary(
+                        'weekly',
+                        session.weekly_session_id,
+                        instances,
+                    ).then((data) => data.students || []);
+                }
+                summaryButton.disabled = true;
+                try {
+                    const summaryEntries = await attendanceLoading;
+                    openAttendanceSummaryDialog(courseLabel, sessionLabel, summaryEntries);
+                } finally {
+                    summaryButton.disabled = false;
+                }
             });
             actions.appendChild(summaryButton);
             block.appendChild(actions);
 
-            const instances = session.instances || [];
             if (!instances.length) {
                 const empty = document.createElement('p');
                 empty.textContent = 'Нема одржаних термина у изабраном семестру.';
@@ -483,73 +748,22 @@ async function renderCourseSessions(container, courses) {
             list.className = 'attendance-summary-list';
             block.appendChild(list);
 
-            const entries = await Promise.all(instances.map(async (date) => {
-                const data = await API.getAttendanceRoster('weekly', session.weekly_session_id, date);
-                return {
-                    date,
-                    students: data.students || [],
-                };
-            }));
-
-            const attendanceTotals = new Map();
-            entries.forEach((entry) => {
-                entry.students.forEach((student) => {
-                    const key = student.username;
-                    const current = attendanceTotals.get(key) || {
-                        username: student.username,
-                        student_name: student.student_name || '',
-                        student_index: student.student_index || '',
-                        count: 0,
-                        registration_source: student.registration_source || '',
-                        client_ip: student.client_ip || '',
-                    };
-                    current.count += 1;
-                    if (!current.student_name && student.student_name) {
-                        current.student_name = student.student_name;
-                    }
-                    if (!current.student_index && student.student_index) {
-                        current.student_index = student.student_index;
-                    }
-                    if (!current.registration_source && student.registration_source) {
-                        current.registration_source = student.registration_source;
-                    }
-                    if (!current.client_ip && student.client_ip) {
-                        current.client_ip = student.client_ip;
-                    }
-                    attendanceTotals.set(key, current);
-                });
-            });
-
-            entries.forEach((entry) => {
+            instances.forEach((date) => {
                 const item = document.createElement('li');
                 item.className = 'attendance-summary-item';
-
-                const dateLabel = document.createElement('span');
-                dateLabel.className = 'attendance-summary-date';
-                const dateLink = document.createElement('a');
-                dateLink.href = buildMainTimetableUrl(entry.date, session.room_id, session.start_slot);
-                dateLink.className = 'attendance-date-link';
-                dateLink.textContent = formatDateDDMMYYYY(entry.date);
-                dateLabel.appendChild(dateLink);
-                item.appendChild(dateLabel);
-
-                const countLabel = document.createElement('span');
-                countLabel.className = 'attendance-summary-count';
-                countLabel.textContent = `${entry.students.length} присутних`;
-                item.appendChild(countLabel);
-
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'attendance-summary-btn';
-                button.textContent = 'Погледај све';
-                button.addEventListener('click', () => openAttendanceDialog(entry.date, entry.students));
-                item.appendChild(button);
-
+                item.appendChild(createLazyAttendanceTerm(
+                    'weekly',
+                    session.weekly_session_id,
+                    date,
+                    session.room_id,
+                    session.start_slot,
+                    (session.attendance_counts || {})[date] || 0,
+                ));
                 list.appendChild(item);
             });
 
             return block;
-        }));
+        });
 
         if (!sessionBlocks.length) {
             const empty = document.createElement('p');
@@ -563,6 +777,68 @@ async function renderCourseSessions(container, courses) {
         card.appendChild(details);
         container.appendChild(card);
     }
+}
+
+function createLazyAttendanceLoader(label, loadContent) {
+    const shell = document.createElement('details');
+    shell.className = 'attendance-collapsible attendance-summary';
+
+    const summary = document.createElement('summary');
+    summary.textContent = label;
+    shell.appendChild(summary);
+
+    const content = document.createElement('div');
+    shell.appendChild(content);
+
+    let loaded = false;
+    shell.addEventListener('toggle', async () => {
+        if (!shell.open || loaded) return;
+        loaded = true;
+        content.textContent = 'Учитавање...';
+        try {
+            const replacement = await loadContent();
+            clearNode(content);
+            content.appendChild(replacement);
+        } catch (error) {
+            loaded = false;
+            clearNode(content);
+            const errorMessage = document.createElement('span');
+            errorMessage.textContent = error.message || 'Грешка при учитавању података.';
+            content.appendChild(errorMessage);
+        }
+    });
+    return shell;
+}
+
+function createLazyPersonalAttendanceSummary(reservations, semesterId) {
+    return createLazyAttendanceLoader('Присутност по личној резервацији', async () => {
+        const data = await API.getMyReservationsAttendance(semesterId);
+        const counts = new Map(
+            (data.personal_reservations || []).map((item) => [
+                item.id,
+                item.attendance_count,
+            ]),
+        );
+        return renderPersonalAttendanceByTerm(
+            reservations.map((reservation) => ({
+                ...reservation,
+                attendance_count: counts.get(reservation.id) || 0,
+            })),
+        );
+    });
+}
+
+function createLazyCourseSessions(courses) {
+    if (!courses.length) {
+        const empty = document.createElement('div');
+        renderEmptyMessage(empty, 'Нема предмета у изабраном семестру.');
+        return empty;
+    }
+    return createLazyAttendanceLoader('Прикажи термине и присуство', async () => {
+        const content = document.createElement('div');
+        await renderCourseSessions(content, courses);
+        return content;
+    });
 }
 
 function populateSemesterSelect(select, semesters, selectedId) {
@@ -602,11 +878,19 @@ async function loadReservations(selectedSemesterId = null) {
         oldPersonalSummary.remove();
     }
     if ((data.personal_reservations || []).length) {
-        const summary = await renderPersonalAttendanceSummary(personalContainer.parentElement, data.personal_reservations || []);
+        const summary = createLazyPersonalAttendanceSummary(
+            data.personal_reservations || [],
+            data.selected_semester ? data.selected_semester.id : null,
+        );
         summary.id = 'personal-attendance-summary';
         personalContainer.parentElement.appendChild(summary);
     }
-    await renderCourseSessions(courseContainer, data.courses || []);
+    clearNode(courseContainer);
+    renderCourseOverview(
+        courseContainer,
+        data.courses || [],
+        data.selected_semester ? data.selected_semester.id : null,
+    );
 }
 
 const App = {

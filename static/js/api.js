@@ -81,17 +81,39 @@ export const API = {
         const res = await fetch(getUrl(`/my_reservations_data${suffix}`));
         return handleResponse(res, "Грешка при учитавању мојих резервација");
     },
+    async getMyReservationsAttendance(semesterId) {
+        const suffix = semesterId ? `?semester_id=${semesterId}` : "";
+        const res = await fetch(getUrl(`/my_reservations_attendance_data${suffix}`));
+        return handleResponse(res, "Грешка при учитавању присуства");
+    },
+    async getMyCourseAttendance(semesterId, courseId) {
+        const params = new URLSearchParams();
+        if (semesterId) params.set('semester_id', semesterId);
+        if (courseId) params.set('course_id', courseId);
+        const suffix = params.toString() ? `?${params.toString()}` : "";
+        const res = await fetch(getUrl(`/my_course_attendance_data${suffix}`));
+        return handleResponse(res, "Грешка при учитавању присуства по предметима");
+    },
     async getAttendanceChallenge(kind, eventId, eventDate) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/challenge`), {
             credentials: "same-origin",
         });
         return handleResponse(res, "Грешка при учитавању података о присуству");
     },
-    async getAttendanceRoster(kind, eventId, eventDate) {
-        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/data`), {
+    async getAttendanceRoster(kind, eventId, eventDate, summaryOnly = false) {
+        const suffix = summaryOnly ? '?summary=1' : '';
+        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/data${suffix}`), {
             credentials: "same-origin",
         });
         return handleResponse(res, "Грешка при учитавању листе присутних");
+    },
+    async getAttendanceSummary(kind, eventId, dates) {
+        const params = new URLSearchParams();
+        dates.forEach((date) => params.append('date', date));
+        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/summary?${params.toString()}`), {
+            credentials: "same-origin",
+        });
+        return handleResponse(res, "Грешка при учитавању сажетка присуства");
     },
     async setAttendanceGeofence(kind, eventId, eventDate, enabled) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/geofence`), {

@@ -35,20 +35,48 @@ def personal_reservations_for_semester(username, semester):
         JOIN rooms rm ON rm.id = r.room_id
         WHERE r.username = ?
           AND r.date BETWEEN ? AND ?
-        ORDER BY r.date, r.start_slot, r.room_id, r.id
+        ORDER BY r.date DESC, r.start_slot DESC, r.room_id, r.id
         """,
         (username, semester["start_date"], semester["end_date"]),
     )
     return [dict(row) for row in rows]
 
 
-def course_sessions_for_semester(semester_id, teacher_username=None):
+def personal_reservation_attendance_for_semester(username, semester):
+    """Return attendance counts for the user's reservations in one semester."""
+    if not semester:
+        return []
+
+    rows = query_db(
+        """
+        SELECT r.id,
+               COUNT(ar.id) AS attendance_count
+        FROM reservations r
+        LEFT JOIN attendance_records ar
+               ON ar.event_kind = 'reservation'
+              AND ar.event_id = r.id
+              AND ar.event_date = r.date
+        WHERE r.username = ?
+          AND r.date BETWEEN ? AND ?
+        GROUP BY r.id
+        ORDER BY r.date DESC, r.start_slot DESC, r.room_id, r.id
+        """,
+        (username, semester["start_date"], semester["end_date"]),
+    )
+    return [dict(row) for row in rows]
+
+
+def course_sessions_for_semester(semester_id, teacher_username=None, course_id=None):
     """Return the course sessions that belong to a semester, optionally filtered by teacher."""
     params = [semester_id]
     teacher_clause = ""
     if teacher_username:
         teacher_clause = "AND t.username = ?"
         params.append(teacher_username)
+    course_clause = ""
+    if course_id is not None:
+        course_clause = "AND c.id = ?"
+        params.append(course_id)
 
     rows = query_db(
         """
@@ -75,6 +103,7 @@ def course_sessions_for_semester(semester_id, teacher_username=None):
         LEFT JOIN groups g ON g.id = sg.group_id
         WHERE cs.semester_id = ?
         {teacher_clause}
+        {course_clause}
         GROUP BY c.id,
                  c.name,
                  c.code,
@@ -89,7 +118,7 @@ def course_sessions_for_semester(semester_id, teacher_username=None):
                  ws.start_slot,
                  ws.end_slot
         ORDER BY c.name, c.code, cs.id, ws.day_of_week, ws.start_slot, ws.room_id
-        """.format(teacher_clause=teacher_clause),
+        """.format(teacher_clause=teacher_clause, course_clause=course_clause),
         tuple(params),
     )
 
@@ -124,10 +153,14 @@ def course_sessions_for_semester(semester_id, teacher_username=None):
     return list(courses.values())
 
 
-def weekly_session_instances_for_semester(semester_id, teacher_username=None):
+def weekly_session_instances_for_semester(semester_id, teacher_username=None, course_id=None):
     """Return the actual held dates for each weekly session in a semester."""
     params = [semester_id]
     teacher_clause = ""
+    course_clause = ""
+    if course_id is not None:
+        course_clause = "AND cs.course_id = ?"
+        params.append(course_id)
     if teacher_username:
         teacher_clause = "AND t.username = ?"
         params.append(teacher_username)
@@ -135,7 +168,8 @@ def weekly_session_instances_for_semester(semester_id, teacher_username=None):
     rows = query_db(
         """
         SELECT ws.id AS weekly_session_id,
-               d.date AS date
+               d.date AS date,
+               COUNT(ar.id) AS attendance_count
         FROM weekly_sessions ws
         JOIN course_sessions cs ON cs.id = ws.session_id
         JOIN teachers t ON t.id = cs.teacher_id
@@ -150,33 +184,45 @@ def weekly_session_instances_for_semester(semester_id, teacher_username=None):
         LEFT JOIN weekly_cancellations wxc
                ON wxc.weekly_session_id = ws.id
               AND wxc.date = d.date
+        LEFT JOIN attendance_records ar
+               ON ar.event_kind = 'weekly'
+              AND ar.event_id = ws.id
+              AND ar.event_date = d.date
         WHERE cs.semester_id = ?
+          {course_clause}
           {teacher_clause}
           AND wxc.id IS NULL
+        GROUP BY ws.id, d.date
         ORDER BY ws.id, d.date
-        """.format(teacher_clause=teacher_clause),
+        """.format(teacher_clause=teacher_clause, course_clause=course_clause),
         tuple(params),
     )
 
     instances = {}
+    attendance_counts = {}
     for row in rows:
         instances.setdefault(row["weekly_session_id"], []).append(row["date"])
+        attendance_counts.setdefault(row["weekly_session_id"], {})[row["date"]] = row["attendance_count"]
 
-    return instances
+    return instances, attendance_counts
 
 
-def attach_weekly_session_instances(courses, semester_id, teacher_username=None):
+def attach_weekly_session_instances(courses, semester_id, teacher_username=None, course_id=None):
     """Attach the held dates to each weekly session in the course list."""
     if not semester_id:
         return courses
 
-    instances_by_session = weekly_session_instances_for_semester(
+    instances_by_session, attendance_counts_by_session = weekly_session_instances_for_semester(
         semester_id,
         teacher_username=teacher_username,
+        course_id=course_id,
     )
     for course in courses:
         for session in course["sessions"]:
             session["instances"] = instances_by_session.get(session["weekly_session_id"], [])
+            session["attendance_counts"] = attendance_counts_by_session.get(
+                session["weekly_session_id"], {}
+            )
     return courses
 
 
@@ -207,12 +253,6 @@ def my_reservations_json():
     course_sessions = []
     if selected_semester_id:
         course_sessions = course_sessions_for_semester(selected_semester_id, teacher_username=current_user.username)
-        attach_weekly_session_instances(
-            course_sessions,
-            selected_semester_id,
-            teacher_username=current_user.username,
-        )
-
     return jsonify(
         {
             "semesters": semesters,
@@ -220,5 +260,80 @@ def my_reservations_json():
             "selected_semester": selected_semester,
             "personal_reservations": personal_reservations,
             "courses": course_sessions,
+        }
+    )
+
+
+@bp.route("/my_reservations_attendance_data")
+@login_required
+def my_reservations_attendance_json():
+    """Return attendance counts for personal reservations in a semester."""
+    limited = enforce_rate_limit(
+        "my_reservations_attendance_data",
+        *RATE_LIMITS["my_reservations_attendance_data"],
+        key=current_user.username,
+    )
+    if limited is not None:
+        return limited
+
+    semester_id = request.args.get("semester_id", type=int)
+    course_id = request.args.get("course_id", type=int)
+    semesters = fetch_semesters()
+    selected_semester_id, selected_semester = select_semester(semester_id, semesters)
+    if semester_id is not None and selected_semester is None:
+        abort(404, "semester not found")
+
+    personal_reservations = []
+    if selected_semester_id:
+        personal_reservations = personal_reservation_attendance_for_semester(
+            current_user.username,
+            selected_semester,
+        )
+
+    return jsonify(
+        {
+            "selected_semester": selected_semester,
+            "personal_reservations": personal_reservations,
+        }
+    )
+
+
+@bp.route("/my_course_attendance_data")
+@login_required
+def my_course_attendance_json():
+    """Return held dates and attendance counts for courses in a semester."""
+    limited = enforce_rate_limit(
+        "my_course_attendance_data",
+        *RATE_LIMITS["my_course_attendance_data"],
+        key=current_user.username,
+    )
+    if limited is not None:
+        return limited
+
+    semester_id = request.args.get("semester_id", type=int)
+    course_id = request.args.get("course_id", type=int)
+    semesters = fetch_semesters()
+    selected_semester_id, selected_semester = select_semester(semester_id, semesters)
+    if semester_id is not None and selected_semester is None:
+        abort(404, "semester not found")
+
+    courses = []
+    if selected_semester_id:
+        courses = course_sessions_for_semester(
+            selected_semester_id,
+            teacher_username=current_user.username,
+            course_id=course_id,
+        )
+        attach_weekly_session_instances(
+            courses,
+            selected_semester_id,
+            teacher_username=current_user.username,
+            course_id=course_id,
+        )
+
+    return jsonify(
+        {
+            "selected_semester": selected_semester,
+            "courses": courses,
         }
     )

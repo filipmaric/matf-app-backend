@@ -189,6 +189,14 @@ def test_my_reservations_data_groups_personal_and_courses(client, db):
     )
     db.reservation(
         room_id=room,
+        date="2026-04-10",
+        start=14,
+        end=16,
+        description="newer personal",
+        username="alice",
+    )
+    db.reservation(
+        room_id=room,
         date="2025-03-10",
         start=8,
         end=10,
@@ -246,10 +254,50 @@ def test_my_reservations_data_groups_personal_and_courses(client, db):
     data = r.get_json()
 
     assert data["selected_semester"]["display_name"] == "2026/27. јесењи"
-    assert [item["description"] for item in data["personal_reservations"]] == ["current personal"]
+    assert [item["description"] for item in data["personal_reservations"]] == [
+        "newer personal",
+        "current personal",
+    ]
+    assert "attendance_count" not in data["personal_reservations"][0]
     assert [course_item["course_name"] for course_item in data["courses"]] == ["NumericalMethods"]
     assert [session["start_slot"] for session in data["courses"][0]["sessions"]] == [10]
-    assert data["courses"][0]["sessions"][0]["instances"] == ["2026-03-09", "2026-03-23"]
+    assert "instances" not in data["courses"][0]["sessions"][0]
+
+    personal_attendance_data = client.get(
+        f"/my_reservations_attendance_data?semester_id={current_semester}"
+    )
+    assert personal_attendance_data.status_code == 200
+    personal_attendance = personal_attendance_data.get_json()["personal_reservations"]
+    assert [item["attendance_count"] for item in personal_attendance] == [0, 0]
+
+    course_attendance_data = client.get(
+        f"/my_course_attendance_data?semester_id={current_semester}"
+    )
+    assert course_attendance_data.status_code == 200
+    assert "personal_reservations" not in course_attendance_data.get_json()
+    attendance_session = course_attendance_data.get_json()["courses"][0]["sessions"][0]
+    assert attendance_session["instances"] == ["2026-03-09", "2026-03-23"]
+    assert attendance_session["attendance_counts"] == {
+        "2026-03-09": 0,
+        "2026-03-23": 0,
+    }
+
+    selected_course_attendance = client.get(
+        f"/my_course_attendance_data?semester_id={current_semester}&course_id={course}"
+    )
+    assert selected_course_attendance.status_code == 200
+    selected_course = selected_course_attendance.get_json()["courses"]
+    assert [item["course_id"] for item in selected_course] == [course]
+    assert selected_course[0]["sessions"][0]["instances"] == [
+        "2026-03-09",
+        "2026-03-23",
+    ]
+
+    filtered_course_attendance = client.get(
+        f"/my_course_attendance_data?semester_id={current_semester}&course_id=999999"
+    )
+    assert filtered_course_attendance.status_code == 200
+    assert filtered_course_attendance.get_json()["courses"] == []
 
 
 def test_my_reservations_data_rate_limit(client, db, monkeypatch):
@@ -331,6 +379,38 @@ def test_attendance_join_and_roster(client, db, monkeypatch):
     assert roster_after_data["students"][0]["student_index"] == "1140/2025"
     assert roster_after_data["students"][0]["student_name"] == "Fritz Ali Agildere"
     assert roster_after_data["students"][0]["student_label"] == "Fritz Ali Agildere (1140/2025)"
+
+    roster_summary = client.get(
+        f"/attendance/weekly/{weekly_session_id}/2026-03-09/data?summary=1"
+    )
+    assert roster_summary.status_code == 200
+    assert roster_summary.get_json()["student_count"] == 1
+    assert roster_summary.get_json()["students"] == []
+
+    myapp.execute_db(
+        """
+        INSERT INTO attendance_records
+            (event_kind, event_id, event_date, username, registration_source, client_ip)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("weekly", weekly_session_id, "2026-03-10", "student1", "android", "192.0.2.11"),
+    )
+
+    attendance_summary = client.get(
+        f"/attendance/weekly/{weekly_session_id}/summary?date=2026-03-09&date=2026-03-10"
+    )
+    assert attendance_summary.status_code == 200
+    assert attendance_summary.get_json()["students"] == [
+        {
+            "username": "student1",
+            "student_name": "Fritz Ali Agildere",
+            "student_index": "1140/2025",
+            "attendance_count": 2,
+            "count": 2,
+            "registration_source": "android",
+            "client_ip": "192.0.2.10",
+        }
+    ]
 
     stored = myapp.query_db(
         """

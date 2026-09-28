@@ -47,6 +47,8 @@ RATE_LIMITS = {
     "rooms": (60, 60),
     "occupancy": (30, 60),
     "my_reservations_data": (30, 60),
+    "my_reservations_attendance_data": (30, 60),
+    "my_course_attendance_data": (30, 60),
     "calendar_data": (60, 60),
     "mobile_2fa": (60, 60),
     "mobile_me": (60, 60),

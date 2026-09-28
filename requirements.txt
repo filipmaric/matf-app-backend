@@ -7,3 +7,4 @@ pytest
 requests
 google-auth
 google-auth-oauthlib
+openpyxl
