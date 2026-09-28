@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Резервације учионица</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
 </head>
 <body>
   <main class="page-shell main-page-shell">
@@ -30,7 +30,7 @@
           </div>
 
           <p id="my-reservations-wrap" class="toolbar-link-wrap" style="display:none">
-            <a id="my-reservations-link" href="{{ url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
+            <a id="my-reservations-link" href="{{ app_url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
           </p>
 
         </div>
@@ -56,6 +56,6 @@
         BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
     };
   </script>
-  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <script type="module" src="{{ app_url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

@@ -18,7 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from calendar_common import validate_day_kind
-from db import ensure_calendar_schema
+from db import ensure_calendar_revision_schema, ensure_calendar_schema
 
 
 DAY_NAMES = {
@@ -118,12 +118,36 @@ def import_calendar(database_path: Path, workbook_path: Path, schema_path: Path,
                     raise FileNotFoundError(f"schema file not found: {schema_path}")
                 conn.executescript(schema_path.read_text(encoding="utf-8"))
             ensure_calendar_schema(conn)
+            ensure_calendar_revision_schema(conn)
             start_date, end_date = rows[0][0], rows[-1][0]
             conn.execute("DELETE FROM days WHERE date BETWEEN ? AND ?", (start_date, end_date))
             conn.executemany(
                 "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
                 rows,
             )
+            semester_ids = [
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT id FROM semesters
+                    WHERE start_date <= ? AND end_date >= ?
+                    """,
+                    (end_date, start_date),
+                ).fetchall()
+            ]
+            for semester_id in semester_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO calendar_revisions (semester_id) VALUES (?)",
+                    (semester_id,),
+                )
+                conn.execute(
+                    """
+                    UPDATE calendar_revisions
+                    SET revision = revision + 1, updated_at = datetime('now')
+                    WHERE semester_id = ?
+                    """,
+                    (semester_id,),
+                )
     finally:
         conn.close()
 

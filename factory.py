@@ -4,7 +4,7 @@
 import logging
 import os
 
-from flask import Flask
+from flask import Flask, url_for
 from logging.handlers import RotatingFileHandler
 
 from config import (
@@ -38,6 +38,15 @@ def create_app():
     app.secret_key = SECRET_KEY
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     init_db_app(app)
+
+    @app.template_global("app_url_for")
+    def app_url_for(endpoint, *args, **kwargs):
+        """Build a route URL that remains correct behind a path prefix."""
+        path = url_for(endpoint, *args, **kwargs)
+        application_root = app.config["APPLICATION_ROOT"].rstrip("/")
+        if application_root and not (path == application_root or path.startswith(f"{application_root}/")):
+            return application_root + path
+        return path
 
     if IS_PRODUCTION:
         if TEACHER_AUTH_MODE != "radius":

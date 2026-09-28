@@ -705,6 +705,23 @@ def _ensure_timetable_revision_schema(conn):
     conn.commit()
 
 
+def _ensure_calendar_revision_schema(conn):
+    """Create per-semester revisions used for cheap calendar cache validation."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS calendar_revisions (
+            semester_id INTEGER PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+        );
+        INSERT OR IGNORE INTO calendar_revisions (semester_id)
+        SELECT id FROM semesters;
+        """
+    )
+    conn.commit()
+
+
 def _ensure_exam_schedule_schema(conn):
     """Create the imported exam schedule table if it is missing."""
     _ensure_building_locations_schema(conn)
@@ -1019,6 +1036,7 @@ def _ensure_extra_schemas(conn):
     """Create the add-on tables used by attendance and Android auth."""
     _ensure_calendar_schema(conn)
     _ensure_semester_schema(conn)
+    _ensure_calendar_revision_schema(conn)
     _ensure_courses_schema(conn)
     _ensure_subject_schema(conn)
     _ensure_course_subject_schema(conn)
@@ -1046,6 +1064,12 @@ def ensure_student_directory_schema(conn):
 def ensure_calendar_schema(conn):
     """Public helper used by calendar import scripts to migrate calendar days."""
     _ensure_calendar_schema(conn)
+
+
+def ensure_calendar_revision_schema(conn):
+    """Public helper used by standalone calendar import scripts."""
+    _ensure_semester_schema(conn)
+    _ensure_calendar_revision_schema(conn)
 
 
 def ensure_student_enrollment_schema(conn):

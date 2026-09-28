@@ -12,7 +12,7 @@ from occupancy import iso_to_weekday
 from calendar_common import validate_day_kind
 
 from auth import RATE_LIMITS, check_if_admin, enforce_rate_limit
-from db import execute_db, query_db
+from db import execute_db, get_db, query_db
 
 
 bp = Blueprint("calendar_views", __name__)
@@ -23,9 +23,9 @@ _calendar_cache = {}
 _calendar_cache_lock = threading.Lock()
 
 
-def calendar_month_payload(month, year):
+def calendar_month_payload(month, year, cache_token=None):
     """Return the read-only calendar payload for one month."""
-    cache_key = (year, month)
+    cache_key = (year, month, cache_token)
     now = time.monotonic()
     with _calendar_cache_lock:
         cached = _calendar_cache.get(cache_key)
@@ -56,6 +56,42 @@ def clear_calendar_cache():
     """Invalidate cached calendar payloads after an administrative update."""
     with _calendar_cache_lock:
         _calendar_cache.clear()
+
+
+def bump_calendar_revisions(dates):
+    """Bump each semester whose calendar contains one of ``dates``."""
+    semester_ids = set()
+    for date_str in dates:
+        semester = query_db(
+            """
+            SELECT id FROM semesters
+            WHERE ? BETWEEN start_date AND end_date
+            ORDER BY start_date DESC, id DESC
+            LIMIT 1
+            """,
+            (date_str,),
+            one=True,
+        )
+        if semester:
+            semester_ids.add(semester["id"])
+
+    for semester_id in semester_ids:
+        execute_db(
+            "INSERT OR IGNORE INTO calendar_revisions (semester_id) VALUES (?)",
+            (semester_id,),
+            commit=False,
+        )
+        execute_db(
+            """
+            UPDATE calendar_revisions
+            SET revision = revision + 1, updated_at = datetime('now')
+            WHERE semester_id = ?
+            """,
+            (semester_id,),
+            commit=False,
+        )
+    if semester_ids:
+        get_db().commit()
 
 
 def _require_admin():
@@ -114,6 +150,7 @@ def update_calendar():
     if not isinstance(updates, list):
         return jsonify({'error': 'expected a list of updates'}), 400
 
+    changed_dates = []
     for index, u in enumerate(updates):
         if not isinstance(u, dict):
             return jsonify({'error': f'update {index} must be an object'}), 400
@@ -137,8 +174,13 @@ def update_calendar():
         if week_day == real_wd:
             week_day = -1
 
-        existing = query_db('SELECT 1 FROM days WHERE date = ?', (date_str,), one=True)
+        existing = query_db(
+            'SELECT kind, week_day FROM days WHERE date = ?', (date_str,), one=True
+        )
         if kind == 'non_working' and not existing:
+            continue
+
+        if existing and existing["kind"] == kind and existing["week_day"] == week_day:
             continue
 
         execute_db(
@@ -148,6 +190,8 @@ def update_calendar():
             ''',
             (date_str, kind, week_day)
         )
+        changed_dates.append(date_str)
+    bump_calendar_revisions(changed_dates)
     clear_calendar_cache()
     return jsonify(success=True)
 

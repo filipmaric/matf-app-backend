@@ -12,6 +12,13 @@ CREATE TABLE days (
     week_day INTEGER NOT NULL DEFAULT -1 -- podrazumevano se gleda stvarni dan, a makeup može zadati drugi raspored
 );
 
+CREATE TABLE calendar_revisions (
+    semester_id INTEGER PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+);
+
 CREATE TABLE reservations (
     id INTEGER PRIMARY KEY,
     room_id INTEGER NOT NULL,

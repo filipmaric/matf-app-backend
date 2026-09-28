@@ -131,6 +131,48 @@ def test_mobile_calendar_supports_read_only_etag_cache(client):
     assert cached.status_code == 304
 
 
+def test_mobile_calendar_etag_uses_semester_revision_without_loading_days(client, db, monkeypatch):
+    db.semester(
+        name="2026/27. јесењи",
+        start="2026-10-01",
+        end="2027-09-30",
+    )
+    token = _mobile_login(client, device_id="device-calendar-revision").get_json()["token"]
+
+    first = client.get(
+        "/mobile/calendar?month=4&year=2027",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert first.status_code == 200
+    etag = first.headers["ETag"]
+
+    import mobile_calendar
+
+    def unexpected_calendar_query(*args, **kwargs):
+        raise AssertionError("304 response should not load calendar days")
+
+    monkeypatch.setattr(mobile_calendar, "calendar_month_payload", unexpected_calendar_query)
+    cached = client.get(
+        "/mobile/calendar?month=4&year=2027",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "If-None-Match": etag,
+        },
+    )
+    assert cached.status_code == 304
+
+    db.execute(
+        "UPDATE calendar_revisions SET revision = revision + 1 WHERE semester_id = 1"
+    )
+    monkeypatch.undo()
+    changed = client.get(
+        "/mobile/calendar?month=4&year=2027",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert changed.status_code == 200
+    assert changed.headers["ETag"] != etag
+
+
 def test_mobile_auth_login_me_and_logout(client, db, monkeypatch):
     import attendance as attendancemod
 

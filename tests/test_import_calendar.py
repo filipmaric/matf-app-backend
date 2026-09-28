@@ -71,3 +71,20 @@ def test_import_calendar_reads_kinds_and_makeup_comments(tmp_path):
         ("2026-10-04", "colloquium", -1),
         ("2026-10-05", "makeup", 4),
     ]
+
+    conn = sqlite3.connect(database_path)
+    conn.execute(
+        "INSERT INTO semesters (academic_year_start, season, start_date, end_date) VALUES (?, ?, ?, ?)",
+        (2026, "јесењи", "2026-10-01", "2027-09-30"),
+    )
+    conn.commit()
+    conn.close()
+
+    import_calendar(database_path, workbook_path, ROOT / "schema.sql")
+
+    conn = sqlite3.connect(database_path)
+    revision = conn.execute(
+        "SELECT revision FROM calendar_revisions WHERE semester_id = 1"
+    ).fetchone()[0]
+    conn.close()
+    assert revision == 1

@@ -18,6 +18,14 @@ def test_index_template(client):
     assert "Моје резервације" in r.get_data(as_text=True)
 
 
+def test_index_template_prefixes_personal_reservations_link_for_subpath_deployment(client, app, monkeypatch):
+    monkeypatch.setitem(app.config, "APPLICATION_ROOT", "/matf-app")
+
+    r = client.get("/")
+
+    assert 'href="/matf-app/my_reservations"' in r.get_data(as_text=True)
+
+
 def test_healthz_route(client):
     r = client.get("/healthz")
     assert r.status_code == 200

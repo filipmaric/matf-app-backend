@@ -134,7 +134,7 @@
 {% if not calendar_access %}
 <div class="calendar-message">
   Да бисте видели и мењали календар, морате бити пријављени као администратор.
-  <a href="{{ url_for('main.index') }}">Пријавите се овде</a>.
+  <a href="{{ app_url_for('main.index') }}">Пријавите се овде</a>.
 </div>
 {% else %}
 <div class="month-navigation">
@@ -163,7 +163,7 @@
     <button id="saveBtn">Сачувај промене</button>
 </div>
 <div id="weekdayMenu" class="context-menu"></div>
-<script src="{{ url_for('static', filename='js/calendar.js') }}?v=6"></script>
+<script src="{{ app_url_for('static', filename='js/calendar.js') }}?v=6"></script>
 {% endif %}
 </body>
 </html>

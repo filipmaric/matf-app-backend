@@ -5,13 +5,13 @@
     <meta charset="UTF-8">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Наставнички часови</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
 </head>
 <body>
   <main class="page-shell teacher-sessions-shell">
     <header class="attendance-page-header">
       <h1>Наставнички часови</h1>
-      <p><a href="{{ url_for('main.index') }}">Назад на распоред</a></p>
+      <p><a href="{{ app_url_for('main.index') }}">Назад на распоред</a></p>
     </header>
 
     <section class="teacher-sessions-toolbar attendance-panel">
@@ -46,6 +46,6 @@
         BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
     };
   </script>
-  <script type="module" src="{{ url_for('static', filename='js/teacherSessions.js') }}"></script>
+  <script type="module" src="{{ app_url_for('static', filename='js/teacherSessions.js') }}"></script>
 </body>
 </html>

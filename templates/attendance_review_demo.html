@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta http-equiv="refresh" content="{{ refresh_seconds }}">
     <title>QR provera za pregled</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
     <style>
         .review-demo-shell {
             max-width: 720px;
@@ -66,7 +66,7 @@
 <body>
   <header class="attendance-page-header">
     <h1>QR provera za pregled</h1>
-    <p><a href="{{ url_for('main.index') }}">Nazad na raspored</a></p>
+    <p><a href="{{ app_url_for('main.index') }}">Nazad na raspored</a></p>
   </header>
 
   <main class="page-shell review-demo-shell">
