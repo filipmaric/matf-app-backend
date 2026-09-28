@@ -1044,6 +1044,7 @@ table {
 table.occupancy-table td.reservation {
     overflow: visible !important;
     position: relative;
+    vertical-align: middle;
 }
 
 .slot-highlight.my {

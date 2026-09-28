@@ -42,7 +42,16 @@ def create_app():
     @app.template_global("app_url_for")
     def app_url_for(endpoint, *args, **kwargs):
         """Build a route URL that remains correct behind a path prefix."""
-        path = url_for(endpoint, *args, **kwargs)
+        url_kwargs = dict(kwargs)
+        if endpoint == "static" and "v" not in url_kwargs:
+            filename = url_kwargs.get("filename")
+            if filename:
+                asset_path = os.path.join(app.static_folder, filename)
+                try:
+                    url_kwargs["v"] = int(os.path.getmtime(asset_path))
+                except OSError:
+                    pass
+        path = url_for(endpoint, *args, **url_kwargs)
         application_root = app.config["APPLICATION_ROOT"].rstrip("/")
         if application_root and not (path == application_root or path.startswith(f"{application_root}/")):
             return application_root + path
