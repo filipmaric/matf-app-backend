@@ -14,7 +14,7 @@ def main():
     )
     parser.add_argument(
         "--env-file",
-        default="/var/www/matf-app/matf.env",
+        default="/var/www/matf-app/deploy/matf.env",
         help="Path to the matf.env file",
     )
     parser.add_argument("--username", required=True, help="Student username")
