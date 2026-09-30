@@ -119,6 +119,23 @@ def _ensure_attendance_schema(conn):
             PRIMARY KEY(event_kind, event_id, event_date)
         );
 
+        CREATE TABLE IF NOT EXISTS attendance_guest_registration_settings (
+            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+            event_id INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+            PRIMARY KEY(event_kind, event_id, event_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS attendance_session_settings (
+            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+            event_id INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY(event_kind, event_id, event_date)
+        );
+
         CREATE TABLE IF NOT EXISTS attendance_attempt_failures (
             attempt_token TEXT PRIMARY KEY,
             failed_attempts INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +178,29 @@ def _ensure_attendance_schema(conn):
             event_id INTEGER NOT NULL,
             event_date TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+            PRIMARY KEY(event_kind, event_id, event_date)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attendance_guest_registration_settings (
+            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+            event_id INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+            PRIMARY KEY(event_kind, event_id, event_date)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attendance_session_settings (
+            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+            event_id INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY(event_kind, event_id, event_date)
         )
         """

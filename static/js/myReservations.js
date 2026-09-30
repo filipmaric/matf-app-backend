@@ -459,7 +459,7 @@ async function renderPersonalAttendanceByTerm(reservations) {
                 content.appendChild(createAttendanceDownloadButton(reservation.date, data.students));
             } catch (error) {
                 loaded = false;
-                content.textContent = error.message || 'Грешка при учитавању присуства.';
+                content.textContent = error.data?.error || 'Грешка при учитавању присуства.';
             }
         });
 
@@ -510,7 +510,7 @@ function createLazyAttendanceTerm(kind, eventId, date, roomId, startSlot, studen
             content.appendChild(createAttendanceDownloadButton(date, data.students));
         } catch (error) {
             loaded = false;
-            content.textContent = error.message || 'Грешка при учитавању присуства.';
+                content.textContent = error.data?.error || 'Грешка при учитавању присуства.';
         }
     });
     return details;
@@ -803,7 +803,7 @@ function createLazyAttendanceLoader(label, loadContent) {
             loaded = false;
             clearNode(content);
             const errorMessage = document.createElement('span');
-            errorMessage.textContent = error.message || 'Грешка при учитавању података.';
+        errorMessage.textContent = error.data?.error || 'Грешка при учитавању података.';
             content.appendChild(errorMessage);
         }
     });

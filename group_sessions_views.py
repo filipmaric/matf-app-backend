@@ -51,7 +51,7 @@ def resolve_academic_year(requested_academic_year):
     for year in years:
         if normalized in {year["academic_year"], str(year["start_year"])}:
             return year
-    abort(404, "academic year not found")
+        abort(404, "Школска година није пронађена.")
 
 
 def normalize_season_filter(requested_season):
@@ -67,7 +67,7 @@ def normalize_season_filter(requested_season):
         return "fall"
     if normalized in {"пролећни", "prolecni", "prolećni"}:
         return "spring"
-    abort(404, "season not found")
+        abort(404, "Семестар није пронађен.")
 
 
 def season_to_semester_label(season_filter):
@@ -269,7 +269,7 @@ def group_sessions_data():
     else:
         selected_group = next((group for group in groups if group["id"] == group_id), None)
         if group_id is not None and selected_group is None:
-            abort(404, "group not found")
+            abort(404, "Група није пронађена.")
 
     sessions = sessions_for_group(group_id, academic_year_start, selected_season) if group_id is not None else []
 

@@ -71,6 +71,12 @@ def test_attendance_templates(client, db):
         end_slot=end_slot,
     )
 
+    started = client.post(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/session",
+        json={"active": True},
+    )
+    assert started.status_code == 200
+
     roster = client.get(f"/attendance/weekly/{weekly_session_id}/{event_date}/data")
     assert roster.status_code == 200
     token = roster.get_json()["join_token"]

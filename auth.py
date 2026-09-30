@@ -115,7 +115,7 @@ def enforce_csrf():
     )
     expected = session.get(CSRF_SESSION_KEY)
     if not sent or not expected or not hmac.compare_digest(sent, expected):
-        return jsonify({"error": "CSRF token missing or invalid"}), 400
+        return jsonify({"error": "CSRF токен недостаје или није важећи."}), 400
     return None
 
 
@@ -164,7 +164,7 @@ def enforce_rate_limit(scope, limit, window_seconds, key=None):
 
         if count >= limit:
             retry_after = max(1, int(window_seconds - (now - window_start)))
-            response = jsonify({"error": "Too many requests"})
+            response = jsonify({"error": "Превише захтева. Покушајте поново касније."})
             response.status_code = 429
             response.headers["Retry-After"] = str(retry_after)
             return response
@@ -180,7 +180,7 @@ def enforce_rate_limit(scope, limit, window_seconds, key=None):
 @login_manager.unauthorized_handler
 def unauthorized():
     """Return the JSON response used when Flask-Login rejects a request."""
-    return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({"error": "Нисте пријављени."}), 401
 
 
 def login_or_service_required(f):
@@ -197,7 +197,7 @@ def login_or_service_required(f):
                 g.service_auth = True
                 return f(*args, **kwargs)
 
-        return jsonify({"error": "Unauthorized"}), 401
+        return jsonify({"error": "Нисте пријављени."}), 401
 
     return decorated
 
@@ -213,7 +213,7 @@ def service_required(f):
                 g.service_auth = True
                 return f(*args, **kwargs)
 
-        return jsonify({"error": "Unauthorized"}), 401
+        return jsonify({"error": "Нисте пријављени."}), 401
 
     return decorated
 
@@ -317,7 +317,7 @@ def login_user_from_credentials(username, password):
         user = User(username)
         login_user(user)
         return jsonify({"success": True, "username": user.username, "role": user.role}), 200
-    return jsonify({"error": "Invalid credentials"}), 401
+    return jsonify({"error": "Корисничко име или лозинка нису исправни."}), 401
 
 
 @bp.route("/login", methods=["POST"])

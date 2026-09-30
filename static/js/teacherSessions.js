@@ -257,7 +257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             root.innerHTML = '';
             const panel = document.createElement('div');
             panel.className = 'attendance-panel teacher-sessions-error';
-            panel.textContent = error.message || 'Грешка при учитавању података.';
+            panel.textContent = error.data?.error || 'Грешка при учитавању података.';
             root.appendChild(panel);
         }
     });
@@ -270,7 +270,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 root.innerHTML = '';
                 const panel = document.createElement('div');
                 panel.className = 'attendance-panel teacher-sessions-error';
-                panel.textContent = error.message || 'Грешка при учитавању података.';
+                panel.textContent = error.data?.error || 'Грешка при учитавању података.';
                 root.appendChild(panel);
             }
         });
@@ -284,7 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 root.innerHTML = '';
                 const panel = document.createElement('div');
                 panel.className = 'attendance-panel teacher-sessions-error';
-                panel.textContent = error.message || 'Грешка при учитавању података.';
+                panel.textContent = error.data?.error || 'Грешка при учитавању података.';
                 root.appendChild(panel);
             }
         });
@@ -296,7 +296,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         root.innerHTML = '';
         const panel = document.createElement('div');
         panel.className = 'attendance-panel teacher-sessions-error';
-        panel.textContent = error.message || 'Грешка при учитавању података.';
+        panel.textContent = error.data?.error || 'Грешка при учитавању података.';
         root.appendChild(panel);
     }
 });

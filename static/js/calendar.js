@@ -46,7 +46,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 	try {
 	    await loadCalendarData(month, year); // sada imamo calendarData i holidays
 	} catch (error) {
-	    calendarDiv.textContent = error.message;
+	    calendarDiv.textContent = 'Грешка при учитавању календара.';
 	    return;
 	}
 	

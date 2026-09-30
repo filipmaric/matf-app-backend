@@ -1,19 +1,21 @@
 /* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
+import { qrCodeDataUrl } from './vendor/qrcode.js';
 import { formatDateDDMMYYYY } from './util.js';
 
 let pollHandle = null;
 let activeSpotCheck = null;
 let countdownHandle = null;
 let countdownExpiresAt = null;
+let qrSessionTimerHandle = null;
+let qrSessionPaused = false;
+let pollInFlight = false;
+
+const QR_SESSION_DURATION_MS = 2 * 60 * 1000;
 
 function buildJoinUrl(kind, eventId, eventDate, token) {
     const basePath = window.APP_CONFIG?.BASE_PATH || '';
     return `${window.location.origin}${basePath}/attendance/${kind}/${eventId}/${eventDate}/join/${token}`;
-}
-
-function buildQrUrl(joinUrl) {
-    return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(joinUrl)}`;
 }
 
 function formatEventTitle(event) {
@@ -34,9 +36,12 @@ function formatAttendanceSource(student) {
 
 function handleAttendanceError(err) {
     const errorCode = err.data?.error_code || '';
-    const errorText = err.data?.error || err.message || '';
+    const errorText = err.data?.error || 'Грешка при учитавању података о присуству.';
     if (errorCode === 'attendance_outside_class_time') {
         return { handled: true, type: 'outside_class', message: errorText };
+    }
+    if (errorCode === 'attendance_canceled') {
+        return { handled: true, type: 'canceled', message: errorText };
     }
     if (errorCode === 'attendance_attempt_expired') {
         return { handled: true, type: 'session_expired', message: errorText };
@@ -88,11 +93,78 @@ function renderQr(root, joinUrl) {
 
     const img = document.createElement('img');
     img.alt = 'QR код за пријаву присуства';
-    img.src = buildQrUrl(joinUrl);
+    img.src = qrCodeDataUrl(joinUrl, 240);
     link.appendChild(img);
     box.appendChild(link);
 
     root.appendChild(box);
+}
+
+function clearQrSessionTimer() {
+    if (qrSessionTimerHandle) {
+        clearTimeout(qrSessionTimerHandle);
+        qrSessionTimerHandle = null;
+    }
+}
+
+function renderQrPaused(root, pageRoot = root) {
+    const existingQr = root.querySelector('.attendance-qr-box');
+    const existingChallenge = root.querySelector('.attendance-challenge-box');
+    const parent = existingQr?.parentElement || existingChallenge?.parentElement || root;
+    if (!parent) return;
+
+    existingQr?.remove();
+    existingChallenge?.remove();
+    parent.querySelector('.attendance-qr-paused')?.remove();
+
+    const box = document.createElement('div');
+    box.className = 'attendance-panel attendance-qr-paused';
+
+    const message = document.createElement('p');
+    message.textContent = 'Пријављивање је паузирано после два минута.';
+    box.appendChild(message);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'attendance-summary-btn';
+    button.textContent = 'Продужи пријављивање';
+    button.addEventListener('click', async () => {
+        qrSessionPaused = false;
+        startQrSession(pageRoot);
+        try {
+            await refresh(pageRoot);
+        } catch (error) {
+            const result = handleAttendanceError(error);
+            if (error.status === 403 && result.handled && result.type === 'outside_class') {
+                showAccessMessage(pageRoot, result.message);
+            }
+        }
+    });
+    box.appendChild(button);
+    parent.appendChild(box);
+}
+
+async function pauseQrSession(root) {
+    qrSessionPaused = true;
+    clearQrSessionTimer();
+    if (countdownHandle) {
+        clearInterval(countdownHandle);
+        countdownHandle = null;
+    }
+    countdownExpiresAt = null;
+    try {
+        // Ask the server for the authoritative expiry state. This makes the
+        // two-minute limit survive closing and reopening the page.
+        await refresh(root);
+    } catch (error) {
+        renderQrPaused(root);
+    }
+}
+
+function startQrSession(root) {
+    clearQrSessionTimer();
+    qrSessionPaused = false;
+    qrSessionTimerHandle = setTimeout(() => pauseQrSession(root), QR_SESSION_DURATION_MS);
 }
 
 function renderChallenge(root, challenge, event) {
@@ -146,6 +218,10 @@ function renderChallenge(root, challenge, event) {
 }
 
 function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
+    if (data.attendance_guest_registration_enabled) {
+        return;
+    }
+
     const box = document.createElement('section');
     box.className = 'attendance-panel attendance-geofence-panel';
 
@@ -164,6 +240,7 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = Boolean(data.attendance_geofence_enabled);
+    checkbox.disabled = Boolean(data.attendance_session_active);
 
     const text = document.createElement('span');
     text.textContent = 'Провери локацију';
@@ -186,7 +263,7 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
             await refresh(pageRoot);
         } catch (error) {
             checkbox.checked = !checkbox.checked;
-            window.alert(error.data?.error || error.message || 'Грешка при чувању провере локације.');
+            window.alert(error.data?.error || 'Грешка при чувању провере локације.');
         } finally {
             checkbox.disabled = false;
         }
@@ -195,7 +272,111 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
     root.appendChild(box);
 }
 
-function renderRoster(root, students) {
+function renderGuestRegistrationControl(root, data, kind, eventId, eventDate, pageRoot) {
+    const box = document.createElement('section');
+    box.className = 'attendance-panel attendance-guest-registration-panel';
+
+    const label = document.createElement('label');
+    label.className = 'attendance-geofence-toggle';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = Boolean(data.attendance_guest_registration_enabled);
+    checkbox.disabled = Boolean(data.attendance_session_active);
+
+    const text = document.createElement('span');
+    text.textContent = 'Дозволи пријаву неулогованих студената';
+
+    const status = document.createElement('span');
+    status.className = `attendance-geofence-status ${
+        data.attendance_guest_registration_enabled
+            ? 'attendance-geofence-status-on'
+            : 'attendance-geofence-status-off'
+    }`;
+    status.textContent = data.attendance_guest_registration_enabled ? 'укључено' : 'искључено';
+
+    label.appendChild(checkbox);
+    label.appendChild(text);
+    box.appendChild(label);
+    box.appendChild(status);
+
+    checkbox.addEventListener('change', async () => {
+        if (checkbox.checked && !window.confirm(
+            'Овај режим не проверава идентитет студента нити локацију. Свако ко скенира QR код може да се пријави у име било ког постојећег студента, а провера локације ће бити искључена. Да ли желите да наставите?'
+        )) {
+            checkbox.checked = false;
+            return;
+        }
+
+        checkbox.disabled = true;
+        try {
+            await API.setAttendanceGuestRegistration(kind, eventId, eventDate, checkbox.checked);
+            await refresh(pageRoot);
+        } catch (error) {
+            checkbox.checked = !checkbox.checked;
+            window.alert(error.data?.error || 'Грешка при чувању режима пријаве.');
+        } finally {
+            checkbox.disabled = false;
+        }
+    });
+
+    root.appendChild(box);
+}
+
+function renderStartAttendanceControl(root, kind, eventId, eventDate, pageRoot, expired = false) {
+    const box = document.createElement('section');
+    box.className = 'attendance-panel attendance-start-panel';
+
+    const explanation = document.createElement('p');
+    explanation.textContent = expired
+        ? 'Пријављивање је истекло после два минута. Ако желите да наставите, продужите га.'
+        : 'Подесите начин пријављивања изнад, а затим покрените пријављивање.';
+    box.appendChild(explanation);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'attendance-summary-btn';
+    button.textContent = expired ? 'Продужи пријављивање' : 'Започни пријављивање';
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+            await API.setAttendanceSession(kind, eventId, eventDate, true);
+            startQrSession(pageRoot);
+            await refresh(pageRoot);
+        } catch (error) {
+            window.alert(error.data?.error || 'Грешка при покретању пријављивања.');
+            button.disabled = false;
+        }
+    });
+    box.appendChild(button);
+    root.appendChild(box);
+}
+
+function renderStopAttendanceControl(root, kind, eventId, eventDate, pageRoot) {
+    const box = document.createElement('section');
+    box.className = 'attendance-panel attendance-stop-panel';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'attendance-summary-btn';
+    button.textContent = 'Заустави пријављивање';
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+            await API.setAttendanceSession(kind, eventId, eventDate, false);
+            clearQrSessionTimer();
+            qrSessionPaused = false;
+            await refresh(pageRoot);
+        } catch (error) {
+            window.alert(error.data?.error || 'Грешка при заустављању пријављивања.');
+            button.disabled = false;
+        }
+    });
+    box.appendChild(button);
+    root.appendChild(box);
+}
+
+function renderRoster(root, students, kind, eventId, eventDate, pageRoot) {
     const section = document.createElement('section');
     section.className = 'attendance-roster';
 
@@ -212,6 +393,7 @@ function renderRoster(root, students) {
         students.forEach((student) => {
             const li = document.createElement('li');
             const label = document.createElement('span');
+            label.className = 'attendance-roster-student';
             label.textContent = formatStudentLabel(student);
             li.appendChild(label);
 
@@ -220,6 +402,32 @@ function renderRoster(root, students) {
             source.className = `attendance-source-badge attendance-source-${normalizedSource}`;
             source.textContent = normalizedSource;
             li.appendChild(source);
+
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'attendance-remove-record-btn';
+            removeButton.textContent = '×';
+            removeButton.title = 'Обриши пријаву студента';
+            removeButton.setAttribute('aria-label', 'Обриши пријаву студента');
+            removeButton.addEventListener('click', async () => {
+                if (!window.confirm(`Да ли желите да обришете пријаву студента ${formatStudentLabel(student)}?`)) {
+                    return;
+                }
+                removeButton.disabled = true;
+                try {
+                    await API.deleteAttendanceRecord(
+                        kind,
+                        eventId,
+                        eventDate,
+                        student.attendance_record_id,
+                    );
+                    await refresh(pageRoot);
+                } catch (error) {
+                    window.alert(error.data?.error || 'Грешка при брисању пријаве студента.');
+                    removeButton.disabled = false;
+                }
+            });
+            li.appendChild(removeButton);
             list.appendChild(li);
         });
         section.appendChild(list);
@@ -340,22 +548,32 @@ function openSpotCheckDialog(root, kind, eventId, eventDate, event, students) {
     } else {
         const list = document.createElement('ul');
         list.className = 'attendance-spot-check-list';
-        students.forEach((student) => {
+        students.forEach((student, index) => {
             const item = document.createElement('li');
-            const label = document.createElement('label');
-            label.className = 'attendance-spot-check-item';
-
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.checked = false;
-            checkbox.value = student.username;
-
             const text = document.createElement('span');
+            text.className = 'attendance-spot-check-student';
             text.textContent = formatStudentLabel(student);
+            item.appendChild(text);
 
-            label.appendChild(checkbox);
-            label.appendChild(text);
-            item.appendChild(label);
+            const statuses = document.createElement('span');
+            statuses.className = 'attendance-spot-check-statuses';
+            ['Присутан', 'Одсутан'].forEach((status, statusIndex) => {
+                const label = document.createElement('label');
+                label.className = 'attendance-spot-check-item';
+
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = `attendance-status-${index}`;
+                radio.value = statusIndex === 0 ? 'present' : 'absent';
+                radio.dataset.username = student.username;
+                radio.dataset.attendanceStatus = radio.value;
+                radio.checked = statusIndex === 0;
+
+                label.appendChild(radio);
+                label.appendChild(document.createTextNode(status));
+                statuses.appendChild(label);
+            });
+            item.appendChild(statuses);
             list.appendChild(item);
         });
         body.appendChild(list);
@@ -366,8 +584,9 @@ function openSpotCheckDialog(root, kind, eventId, eventDate, event, students) {
             return;
         }
         const selectedUsernames = activeSpotCheck.students.map((student) => student.username);
-        const confirmedUsernames = Array.from(body.querySelectorAll('input[type="checkbox"]:checked'))
-            .map((checkbox) => checkbox.value);
+        const confirmedUsernames = Array.from(
+            body.querySelectorAll('input[data-attendance-status="present"]:checked')
+        ).map((radio) => radio.dataset.username);
         confirmButton.disabled = true;
         try {
             await API.submitAttendanceSpotCheck(
@@ -382,7 +601,7 @@ function openSpotCheckDialog(root, kind, eventId, eventDate, event, students) {
             activeSpotCheck = null;
             dialog.close();
         } catch (error) {
-            const message = error.data?.error || error.message || 'Грешка при чувању провере.';
+            const message = error.data?.error || 'Грешка при чувању провере.';
             const note = document.createElement('p');
             note.textContent = message;
             body.appendChild(note);
@@ -403,6 +622,8 @@ function showAccessMessage(root, messageText) {
         clearInterval(pollHandle);
         pollHandle = null;
     }
+    clearQrSessionTimer();
+    qrSessionPaused = false;
     root.innerHTML = '';
     const panel = document.createElement('div');
     panel.className = 'attendance-panel attendance-blocked-panel';
@@ -420,7 +641,7 @@ function showAccessMessage(root, messageText) {
 
 async function refresh(root) {
     const { kind, eventId, eventDate } = root.dataset;
-    const data = await API.getAttendanceRoster(kind, eventId, eventDate);
+    const data = await API.getAttendanceRoster(kind, eventId, eventDate, false, !qrSessionPaused);
     root.innerHTML = '';
     if (countdownHandle) {
         clearInterval(countdownHandle);
@@ -431,21 +652,40 @@ async function refresh(root) {
     const { left, right } = ensureTeacherLayout(root);
 
     renderEventInfo(left, data.event);
+    renderGuestRegistrationControl(left, data, kind, eventId, eventDate, root);
     renderGeofenceControl(left, data, kind, eventId, eventDate, root);
 
+    if (data.event.is_canceled) {
+        showAccessMessage(root, 'Овај час је отказан.');
+        return data;
+    }
     if (!data.attendance_open) {
         showAccessMessage(root, 'Пријава присуства је могућа само током часа.');
-        return;
+        return data;
     }
 
-    const joinUrl = buildJoinUrl(kind, eventId, eventDate, data.join_token);
-    renderQr(left, joinUrl);
-    renderChallenge(left, data.challenge, data.event);
-    renderRoster(right, data.students || []);
+    if (!data.attendance_session_active) {
+        renderStartAttendanceControl(left, kind, eventId, eventDate, root, data.attendance_session_expired);
+    } else if (qrSessionPaused) {
+        renderQrPaused(left, root);
+    } else {
+        const joinUrl = buildJoinUrl(kind, eventId, eventDate, data.join_token);
+        renderQr(left, joinUrl);
+        renderChallenge(left, data.challenge, data.event);
+    }
+    if (data.attendance_session_active) {
+        renderStopAttendanceControl(left, kind, eventId, eventDate, root);
+    }
+    renderRoster(right, data.students || [], kind, eventId, eventDate, root);
 
     if (data.students && data.students.length) {
         const actions = document.createElement('div');
         actions.className = 'attendance-session-actions';
+
+        const help = document.createElement('p');
+        help.className = 'attendance-spot-check-help';
+        help.textContent = 'Овде можете ручно проверити део пријављених студената. Систем ће предложити до пет студената; означите оне чије присуство потврђујете.';
+        actions.appendChild(help);
 
         const button = document.createElement('button');
         button.type = 'button';
@@ -457,7 +697,7 @@ async function refresh(root) {
                 const shortlist = await API.getAttendanceSpotCheck(kind, eventId, eventDate, 5);
                 openSpotCheckDialog(root, kind, eventId, eventDate, shortlist.event || data.event, shortlist.students || []);
             } catch (error) {
-                window.alert(error.data?.error || error.message || 'Грешка при учитавању провере присуства.');
+                window.alert(error.data?.error || 'Грешка при учитавању провере присуства.');
             } finally {
                 button.disabled = false;
             }
@@ -466,19 +706,31 @@ async function refresh(root) {
         right.appendChild(actions);
     }
 
+    return data;
 }
 
 const App = {
     async init() {
         const root = document.getElementById('attendance-root');
         try {
-            await refresh(root);
-            pollHandle = setInterval(() => refresh(root).catch((err) => {
-                const result = handleAttendanceError(err);
-                if (err.status === 403 && result.handled && result.type === 'outside_class') {
-                    showAccessMessage(root, result.message);
+            const data = await refresh(root);
+            if (data.attendance_session_active) {
+                startQrSession(root);
+            }
+            pollHandle = setInterval(async () => {
+                if (pollInFlight) return;
+                pollInFlight = true;
+                try {
+                    await refresh(root);
+                } catch (err) {
+                    const result = handleAttendanceError(err);
+                    if (result.handled && (result.type === 'outside_class' || result.type === 'canceled')) {
+                        showAccessMessage(root, result.message);
+                    }
+                } finally {
+                    pollInFlight = false;
                 }
-            }), 2000);
+            }, 2000);
         } catch (err) {
             const result = handleAttendanceError(err);
             if (err.status === 403 && result.handled && result.type === 'outside_class') {
@@ -487,7 +739,7 @@ const App = {
             }
             root.innerHTML = '';
             const p = document.createElement('p');
-            p.textContent = err.message;
+            p.textContent = 'Грешка при учитавању података о присуству.';
             root.appendChild(p);
         }
     },

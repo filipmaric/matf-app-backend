@@ -9,6 +9,7 @@ nav:
   - Setup: setup.md
   - Production: deployment.md
   - Attendance: attendance.md
+  - Attendance stress test: attendance-stress-test.md
   - Mobile Client Contract: mobile_client.md
   - API Reference:
       - Overview: api.md

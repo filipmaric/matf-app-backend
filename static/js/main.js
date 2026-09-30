@@ -66,7 +66,7 @@ const AuthManager = {
             await this.updateUI();
             if (onSuccess) onSuccess(); // callback
         } catch (err) {
-            alert(err.message);
+            alert(err.data?.error || 'Пријава на систем није успела.');
         }
     },
 
@@ -76,7 +76,7 @@ const AuthManager = {
             this.reset();
             if (onSuccess) onSuccess(); // callback
         } catch (err) {
-            alert(err.message);
+            alert(err.data?.error || 'Одјава није успела.');
         }
     },
 
@@ -348,7 +348,7 @@ const DragAndDropManager = {
                 ...(username && { username })
             });
             App.refresh();
-        } catch (err) { alert(err.message); }
+        } catch (err) { alert(err.data?.error || 'Операција није успела.'); }
     }
 };
 

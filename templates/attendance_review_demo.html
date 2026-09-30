@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <meta http-equiv="refresh" content="{{ refresh_seconds }}">
-    <title>QR provera za pregled</title>
+    <title>QR провера за преглед</title>
     <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
     <style>
         .review-demo-shell {
@@ -65,26 +65,26 @@
 </head>
 <body>
   <header class="attendance-page-header">
-    <h1>QR provera za pregled</h1>
-    <p><a href="{{ app_url_for('main.index') }}">Nazad na raspored</a></p>
+    <h1>QR провера за преглед</h1>
+    <p><a href="{{ app_url_for('main.index') }}">Назад на распоред</a></p>
   </header>
 
   <main class="page-shell review-demo-shell">
     <section class="review-demo-card">
       <h1>{{ attendance_event.course_name }}</h1>
       <div class="review-demo-meta">
-        <div>Datum: {{ attendance_event.event_date }}</div>
-        <div>Vreme: {{ attendance_event.start_slot }}:00 - {{ attendance_event.end_slot }}:00</div>
-        <div>Sala: {{ attendance_event.room_name }}</div>
-        <div>Nastavnik: {{ attendance_event.teacher_name }}</div>
+        <div>Датум: {{ attendance_event.event_date }}</div>
+        <div>Време: {{ attendance_event.start_slot }}:00 - {{ attendance_event.end_slot }}:00</div>
+        <div>Сала: {{ attendance_event.room_name }}</div>
+        <div>Наставник: {{ attendance_event.teacher_name }}</div>
       </div>
 
       <div class="review-demo-qr">
-        <img src="{{ qr_url }}" alt="QR kod za pregled">
+        <img src="{{ qr_url }}" alt="QR код за преглед">
       </div>
 
       <div class="review-demo-note">
-        Ova stranica služi samo za pregled aplikacije. QR kod otvara standardni tok prijave prisustva, ali uspešna prijava na ovom demo događaju ne upisuje nikakve podatke u bazu.
+        Ова страница служи само за преглед апликације. QR код отвара стандардни ток пријаве присуства, али успешна пријава на овом демо догађају не уписује никакве податке у базу.
       </div>
 
       <div class="review-demo-link">

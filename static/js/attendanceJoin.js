@@ -12,13 +12,9 @@ let freezeCountdownHandle = null;
 let freezeMessageText = '';
 let outsideClassShown = false;
 let geofenceErrorShown = false;
+let pollInFlight = false;
 
 const CHALLENGE_ROUND_MS = 10000;
-
-function buildMainPageUrl() {
-    const basePath = window.APP_CONFIG?.BASE_PATH || '';
-    return `${basePath}/`;
-}
 
 function pad2(value) {
     return String(value).padStart(2, '0');
@@ -164,7 +160,7 @@ function updateFreezeCountdown(root) {
                 showBlockedState(root);
             } else {
                 const msg = root.querySelector('#attendance-message');
-                if (msg) msg.textContent = err.message;
+                if (msg) msg.textContent = 'Грешка при освежавању података о присуству.';
             }
         });
     }
@@ -266,10 +262,11 @@ function renderChallenge(root, data, state = {}) {
     form.appendChild(username);
 
     const password = document.createElement('input');
+    const guestRegistrationEnabled = Boolean(data.attendance_guest_registration_enabled);
     password.type = 'password';
     password.id = 'attendance-password';
     password.placeholder = 'Лозинка';
-    password.required = true;
+    password.required = !guestRegistrationEnabled;
     password.value = state.password || '';
     // Browsers often ignore autocomplete="off" on password fields, so use the
     // standard "new-password" hint to discourage saved password suggestions.
@@ -278,7 +275,14 @@ function renderChallenge(root, data, state = {}) {
     password.setAttribute('autocapitalize', 'off');
     password.setAttribute('autocorrect', 'off');
     password.setAttribute('spellcheck', 'false');
-    form.appendChild(password);
+    if (!guestRegistrationEnabled) {
+        form.appendChild(password);
+    } else {
+        const note = document.createElement('p');
+        note.className = 'attendance-guest-registration-note';
+        note.textContent = 'Наставник је укључио пријаву без лозинке. Унесите своје корисничко име.';
+        form.appendChild(note);
+    }
 
     const choices = document.createElement('div');
     choices.className = 'challenge-options';
@@ -295,9 +299,11 @@ function renderChallenge(root, data, state = {}) {
             try {
                 const payload = {
                     username: username.value,
-                    password: password.value,
                     selected_code: Number(option),
                 };
+                if (!guestRegistrationEnabled) {
+                    payload.password = password.value;
+                }
                 const result = await API.submitAttendance(
                     root.dataset.kind,
                     root.dataset.eventId,
@@ -319,23 +325,16 @@ function renderChallenge(root, data, state = {}) {
                 successPanel.appendChild(success);
 
                 const note = document.createElement('p');
-                note.textContent = 'Пријава је забележена. Можете затворити ову страницу или се вратити на распоред.';
+                note.textContent = 'Пријава је забележена. Можете затворити ову страницу.';
                 successPanel.appendChild(note);
-
-                const actions = document.createElement('div');
-                actions.className = 'attendance-success-actions';
-
-                const homeLink = document.createElement('a');
-                homeLink.href = buildMainPageUrl();
-                homeLink.className = 'attendance-success-home-link';
-                homeLink.textContent = 'Назад на распоред';
-                actions.appendChild(homeLink);
-
-                successPanel.appendChild(actions);
 
                 root.appendChild(successPanel);
                 scrollToSuccess(root);
             } catch (err) {
+                if (err.data?.error_code === 'attendance_canceled') {
+                    handleAttendanceError(root, err);
+                    return;
+                }
                 if (err.status === 403) {
                     if (handleAttendanceError(root, err)) {
                         return;
@@ -345,7 +344,7 @@ function renderChallenge(root, data, state = {}) {
                 }
                 if (err.status === 409) {
                     frozenUntilBucket = currentChallengeBucket;
-                    freezeMessageText = err.data?.error || err.message || 'Погрешан број. Сачекајте нови круг.';
+                    freezeMessageText = err.data?.error || 'Погрешан број. Сачекајте нови круг.';
                     const freezeNotice = root.querySelector('#attendance-freeze-notice');
                     if (freezeNotice) {
                         freezeNotice.textContent = freezeMessageText;
@@ -356,7 +355,7 @@ function renderChallenge(root, data, state = {}) {
                     freezeCountdownHandle = setInterval(() => updateFreezeCountdown(root), 1000);
                     return;
                 }
-                message.textContent = err.message;
+                message.textContent = err.data?.error || 'Грешка при пријави присуства.';
             }
         });
         choices.appendChild(button);
@@ -460,8 +459,12 @@ function showSessionExpiredState(root) {
 
 function handleAttendanceError(root, err) {
     const errorCode = err.data?.error_code || '';
-    const errorText = err.data?.error || err.message || '';
+    const errorText = err.data?.error || 'Грешка при учитавању података о присуству.';
     if (errorCode === 'attendance_outside_class_time') {
+        showOutsideClassState(root, errorText);
+        return true;
+    }
+    if (errorCode === 'attendance_not_started' || errorCode === 'attendance_canceled') {
         showOutsideClassState(root, errorText);
         return true;
     }
@@ -508,34 +511,33 @@ const App = {
         try {
             await refresh(root);
             pollHandle = setInterval(async () => {
-                if (frozenUntilBucket !== null || outsideClassShown) {
+                if (pollInFlight || frozenUntilBucket !== null || outsideClassShown) {
                     return;
                 }
+                pollInFlight = true;
                 try {
                     await refresh(root);
                 } catch (err) {
+                    if (handleAttendanceError(root, err)) return;
                     if (err.status === 403) {
-                        if (handleAttendanceError(root, err)) {
-                            return;
-                        }
                         showBlockedState(root);
                         return;
                     }
                     const message = root.querySelector('#attendance-message');
-                    if (message) message.textContent = err.message;
+                    if (message) message.textContent = 'Грешка при освежавању података о присуству.';
+                } finally {
+                    pollInFlight = false;
                 }
             }, 5000);
         } catch (err) {
+            if (handleAttendanceError(root, err)) return;
             if (err.status === 403) {
-                if (handleAttendanceError(root, err)) {
-                    return;
-                }
                 showBlockedState(root);
                 return;
             }
             root.innerHTML = '';
             const p = document.createElement('p');
-            p.textContent = err.message;
+            p.textContent = 'Грешка при учитавању података о присуству.';
             root.appendChild(p);
         }
     },

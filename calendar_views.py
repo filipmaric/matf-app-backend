@@ -97,9 +97,9 @@ def bump_calendar_revisions(dates):
 def _require_admin():
     """Reject requests unless the current user is an administrator."""
     if not current_user.is_authenticated:
-        return jsonify({"error": "Unauthorized"}), 401
+        return jsonify({"error": "Нисте пријављени."}), 401
     if not check_if_admin(current_user.username):
-        return jsonify({"error": "Forbidden"}), 403
+        return jsonify({"error": "Приступ није дозвољен."}), 403
     return None
 
 
@@ -124,9 +124,9 @@ def calendar_data():
     month = request.args.get('month', type=int)
     year = request.args.get('year', type=int)
     if month is None or year is None:
-        abort(400, 'month and year are required')
+        abort(400, 'Месец и година су обавезни.')
     if month < 1 or month > 12:
-        abort(400, 'month must be between 1 and 12')
+        abort(400, 'Месец мора бити између 1 и 12.')
 
     return jsonify(calendar_month_payload(month, year))
 
@@ -148,27 +148,27 @@ def update_calendar():
     updates = request.get_json(silent=True)
 
     if not isinstance(updates, list):
-        return jsonify({'error': 'expected a list of updates'}), 400
+        return jsonify({'error': 'Очекује се листа измена.'}), 400
 
     changed_dates = []
     for index, u in enumerate(updates):
         if not isinstance(u, dict):
-            return jsonify({'error': f'update {index} must be an object'}), 400
+            return jsonify({'error': f'Измена {index} мора бити објекат.'}), 400
         date_str = u.get('date')
         if not isinstance(date_str, str):
-            return jsonify({'error': f'update {index} has an invalid date'}), 400
+            return jsonify({'error': f'Измена {index} садржи неисправан датум.'}), 400
         try:
             kind = validate_day_kind(u.get('kind'))
         except (KeyError, TypeError, ValueError) as exc:
-            return jsonify({'error': str(exc)}), 400
+            return jsonify({'error': 'Измена календара није важећа.'}), 400
         week_day = u.get('week_day', -1)
         if not isinstance(week_day, int) or not -1 <= week_day <= 6:
-            return jsonify({'error': f'update {index} has an invalid week_day'}), 400
+            return jsonify({'error': f'Измена {index} садржи неисправан дан у недељи.'}), 400
 
         try:
             datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
-            return jsonify({'error': f'invalid date format for {date_str}, expected YYYY-MM-DD'}), 400
+            return jsonify({'error': f'Датум {date_str} није у исправном формату.'}), 400
 
         real_wd = iso_to_weekday(date_str)
         if week_day == real_wd:
