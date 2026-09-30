@@ -10,7 +10,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Shared workspace data directory used by import/export tools and the app database.
 DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, os.pardir, "data"))
 # SQLite database file used by the application.
-DATABASE = os.path.join(DATA_DIR, "app.db")
+DATABASE = os.getenv("DATABASE", os.path.join(DATA_DIR, "app.db"))
 # SQL schema file used when creating the database from scratch.
 SCHEMA_FILE = os.path.join(BASE_DIR, "schema.sql")
 # Current runtime mode: development, prod, or production.
@@ -113,6 +113,8 @@ ATTENDANCE_CHALLENGE_TTL = int(os.getenv("ATTENDANCE_CHALLENGE_TTL", "10"))
 ATTENDANCE_ATTEMPT_TTL = int(os.getenv("ATTENDANCE_ATTEMPT_TTL", "90"))
 # How many seconds a mobile action OTP setup code remains valid.
 MOBILE_ACTION_OTP_TTL = int(os.getenv("MOBILE_ACTION_OTP_TTL", "180"))
+# How long a teacher attendance session remains active before explicit extension.
+ATTENDANCE_SESSION_TTL = int(os.getenv("ATTENDANCE_SESSION_TTL", "120"))
 # How many days a successful 2FA verification stays trusted for sensitive actions.
 MOBILE_TWO_FACTOR_GRACE_DAYS = int(os.getenv("MOBILE_TWO_FACTOR_GRACE_DAYS", "7"))
 # How many older attendance challenge rounds are still accepted as a grace window.

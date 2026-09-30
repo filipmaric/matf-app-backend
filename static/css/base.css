@@ -272,6 +272,23 @@ body {
     color: #9a4a00;
 }
 
+.attendance-guest-registration-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.attendance-guest-registration-warning,
+.attendance-guest-registration-note {
+    margin: 0;
+    color: #9a4a00;
+}
+
+.attendance-guest-registration-note {
+    padding: 8px 0;
+    font-weight: 600;
+}
+
 .attendance-success-panel {
     text-align: center;
     background: #eef9ef;
@@ -561,6 +578,37 @@ body {
     color: #555;
 }
 
+.attendance-qr-paused {
+    text-align: center;
+}
+
+.attendance-qr-paused p {
+    margin-top: 0;
+}
+
+.attendance-qr-paused .attendance-summary-btn {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.attendance-start-panel {
+    text-align: center;
+}
+
+.attendance-start-panel .attendance-summary-btn {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.attendance-stop-panel {
+    text-align: center;
+}
+
+.attendance-stop-panel .attendance-summary-btn {
+    margin-left: auto;
+    margin-right: auto;
+}
+
 .challenge-options {
     display: flex;
     flex-wrap: wrap;
@@ -672,10 +720,18 @@ body {
 
 .attendance-session-actions {
     display: flex;
-    justify-content: flex-start;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
     margin: 8px 0 12px;
     padding-top: 8px;
     border-top: 1px solid #e7e7e7;
+}
+
+.attendance-spot-check-help {
+    max-width: 36rem;
+    margin: 0 0 4px;
+    text-align: center;
 }
 
 .attendance-dialog table {
@@ -764,6 +820,11 @@ body {
     margin-bottom: 16px;
 }
 
+.attendance-session-actions .attendance-summary-btn {
+    margin-left: auto;
+    margin-right: auto;
+}
+
 .attendance-download-btn {
     display: block;
     width: fit-content;
@@ -778,12 +839,24 @@ body {
     margin: 4px 0;
 }
 
+.attendance-roster li {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.attendance-roster-student {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .attendance-source-badge {
     display: inline-flex;
+    flex: 0 0 60px;
+    box-sizing: border-box;
     align-items: center;
     justify-content: center;
-    min-width: 56px;
-    padding: 2px 8px;
+    min-width: 60px;
+    padding: 2px 5px;
     border-radius: 999px;
     border: 1px solid #cfd6dc;
     background: #eef2f5;
@@ -820,10 +893,56 @@ body {
     gap: 8px;
 }
 
+.attendance-spot-check-student {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.attendance-spot-check-statuses {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 12px;
+    white-space: nowrap;
+}
+
 .attendance-roster ol,
 .attendance-dialog ol {
     margin: 0;
     padding-inline-start: 24px;
+}
+
+.attendance-roster ol {
+    list-style: none;
+    padding-inline-start: 0;
+    counter-reset: attendance-roster-item;
+}
+
+.attendance-roster ol > li::before {
+    counter-increment: attendance-roster-item;
+    content: counter(attendance-roster-item) ".";
+    flex: 0 0 1.5em;
+    color: #555;
+    text-align: right;
+}
+
+.attendance-remove-record-btn {
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 1.15rem;
+    line-height: 1;
+}
+
+.attendance-remove-record-btn:hover,
+.attendance-remove-record-btn:focus-visible {
+    background: #fee2e2;
+    color: #b91c1c;
 }
 
 .attendance-dialog {

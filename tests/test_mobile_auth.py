@@ -210,9 +210,18 @@ def test_mobile_auth_login_me_and_logout(client, db, monkeypatch):
         start_slot=10,
         end_slot=12,
     )
-    join_token = myapp.attendance_join_token("weekly", weekly_session, "2026-03-09")
-
     monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    teacher_login = client.post(
+        "/login",
+        json={"username": "alice", "password": "secret"},
+    )
+    assert teacher_login.status_code == 200
+    session_started = client.post(
+        f"/attendance/weekly/{weekly_session}/2026-03-09/session",
+        json={"active": True},
+    )
+    assert session_started.status_code == 200
+    join_token = myapp.attendance_join_token("weekly", weekly_session, "2026-03-09")
 
     response = client.get(
         f"/attendance/weekly/{weekly_session}/2026-03-09/challenge",
@@ -245,7 +254,7 @@ def test_mobile_auth_me_rate_limit(client, monkeypatch):
 
     response = client.get("/mobile/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 429
-    assert response.get_json() == {"error": "Too many requests"}
+    assert response.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_mobile_attendance_history_rate_limit(client, db, monkeypatch):
@@ -276,7 +285,7 @@ def test_mobile_attendance_history_rate_limit(client, db, monkeypatch):
 
     response = client.get("/mobile/attendance/history", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 429
-    assert response.get_json() == {"error": "Too many requests"}
+    assert response.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_mobile_auth_blocks_second_username_on_same_device_same_day(client):
@@ -332,7 +341,7 @@ def test_mobile_auth_login_rate_limit_is_per_username(client, monkeypatch):
 
     response = _mobile_login(client, username="alice", device_id="device-login-c")
     assert response.status_code == 429
-    assert response.get_json() == {"error": "Too many requests"}
+    assert response.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_mobile_auth_push_token_rate_limit(client, monkeypatch):
@@ -343,7 +352,7 @@ def test_mobile_auth_push_token_rate_limit(client, monkeypatch):
 
     response = _register_installation_id(client, token, installation_id="installation-2")
     assert response.status_code == 429
-    assert response.get_json() == {"error": "Too many requests"}
+    assert response.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_mobile_auth_optional_two_factor_step_up_flow(client, db, monkeypatch):

@@ -19,6 +19,10 @@ def login(client, username="alice", password="secret"):
     )
 
 
+def start_attendance(client, event_id, event_date="2026-03-09"):
+    myapp.attendance_session_set_for_event("weekly", event_id, event_date, True)
+
+
 def freeze_now(monkeypatch):
     fixed_now = datetime.datetime(2026, 6, 15, 10, 0, 0)
     monkeypatch.setattr(reservationsmod, "_current_datetime", lambda: fixed_now)
@@ -77,7 +81,7 @@ def test_login_failure(client, monkeypatch):
 
     r = login(client, "alice")
     assert r.status_code == 401
-    assert r.get_json() == {"error": "Invalid credentials"}
+    assert r.get_json() == {"error": "Корисничко име или лозинка нису исправни."}
 
 
 def test_login_rate_limit(client, monkeypatch):
@@ -89,7 +93,7 @@ def test_login_rate_limit(client, monkeypatch):
 
     r = login(client, "alice")
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_login_rate_limit_is_per_username(client, monkeypatch):
@@ -101,7 +105,7 @@ def test_login_rate_limit_is_per_username(client, monkeypatch):
 
     r = login(client, "alice")
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_csrf_is_required_for_browser_posts(app):
@@ -112,7 +116,7 @@ def test_csrf_is_required_for_browser_posts(app):
 
     missing = raw_client.post("/login", json={"username": "alice", "password": "secret"})
     assert missing.status_code == 400
-    assert missing.get_json()["error"] == "CSRF token missing or invalid"
+    assert missing.get_json()["error"] == "CSRF токен недостаје или није важећи."
 
     ok = raw_client.post(
         "/login",
@@ -308,7 +312,7 @@ def test_my_reservations_data_rate_limit(client, db, monkeypatch):
 
     r = client.get("/my_reservations_data")
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_attendance_join_and_roster(client, db, monkeypatch):
@@ -333,6 +337,7 @@ def test_attendance_join_and_roster(client, db, monkeypatch):
         end_slot=12,
     )
     db.student("student1", "1140/2025", "Agildere", "Fritz Ali")
+    start_attendance(client, weekly_session_id)
 
     roster = client.get(f"/attendance/weekly/{weekly_session_id}/2026-03-09/data")
     assert roster.status_code == 200
@@ -386,6 +391,13 @@ def test_attendance_join_and_roster(client, db, monkeypatch):
     assert roster_summary.status_code == 200
     assert roster_summary.get_json()["student_count"] == 1
     assert roster_summary.get_json()["students"] == []
+
+    roster_without_challenge = client.get(
+        f"/attendance/weekly/{weekly_session_id}/2026-03-09/data?include_challenge=0"
+    )
+    assert roster_without_challenge.status_code == 200
+    assert "challenge" not in roster_without_challenge.get_json()
+    assert "join_token" not in roster_without_challenge.get_json()
 
     myapp.execute_db(
         """
@@ -532,6 +544,7 @@ def test_attendance_roster_uses_unknown_fallback(client, db):
         ("weekly", weekly_session_id, "2026-03-09", "ghost_student"),
     )
 
+    start_attendance(client, weekly_session_id)
     roster = client.get(f"/attendance/weekly/{weekly_session_id}/2026-03-09/data")
     assert roster.status_code == 200
     student = roster.get_json()["students"][0]
@@ -651,6 +664,7 @@ def test_attendance_join_blocks_after_two_wrong_numbers(client, db, monkeypatch)
         end_slot=12,
     )
 
+    start_attendance(client, weekly_session_id)
     roster = client.get(f"/attendance/weekly/{weekly_session_id}/2026-03-09/data")
     token = roster.get_json()["join_token"]
     client.get(
@@ -707,6 +721,7 @@ def test_attendance_attempt_expired_is_reported_separately(client, db, monkeypat
         start_slot=10,
         end_slot=12,
     )
+    start_attendance(client, weekly_session_id)
 
     expired_now = myapp.datetime.datetime.now() - myapp.datetime.timedelta(
         seconds=cfg.ATTENDANCE_ATTEMPT_TTL + 1
@@ -745,6 +760,7 @@ def test_expired_attendance_attempt_clears_failure_rows(client, db, monkeypatch)
         start_slot=10,
         end_slot=12,
     )
+    start_attendance(client, weekly_session_id)
 
     expired_now = myapp.datetime.datetime.now() - myapp.datetime.timedelta(
         seconds=cfg.ATTENDANCE_ATTEMPT_TTL + 1
@@ -914,7 +930,7 @@ def test_delete_reservation_current_blocked_when_attendance_exists(client, db, m
     r = client.delete(f"/reservation/{res_id}")
     assert r.status_code == 409
     assert r.get_json() == {
-        "error": "Reservations can be canceled only on the current or future dates and only if attendance has not been recorded."
+        "error": "Резервације се могу отказати само за данашњи или будући датум, ако присуство још није забележено."
     }
 
 
@@ -934,7 +950,7 @@ def test_delete_reservation_past_blocked(client, db, monkeypatch):
     r = client.delete(f"/reservation/{res_id}")
     assert r.status_code == 409
     assert r.get_json() == {
-        "error": "Reservations can be canceled only on the current or future dates and only if attendance has not been recorded."
+        "error": "Резервације се могу отказати само за данашњи или будући датум, ако присуство још није забележено."
     }
 
 
@@ -1042,7 +1058,7 @@ def test_delete_reservation_unauthorized(client, db, monkeypatch):
     freeze_now(monkeypatch)
     r = client.delete(f"/reservation/{res_id}")
     assert r.status_code == 401
-    assert r.get_json() == {"error": "Unauthorized"}
+    assert r.get_json() == {"error": "Нисте пријављени."}
 
 
 def test_bulk_reservations_atomic(client, db):
@@ -1101,7 +1117,7 @@ def test_bulk_reservations_atomic(client, db):
         },
     )
     assert r.status_code == 409
-    assert r.get_json() == {"error": "bulk reservation failed"}
+    assert r.get_json() == {"error": "Групна резервација није успела."}
 
     r = client.get("/occupancy?date=2026-03-09")
     rooms = r.get_json()["rooms"]
@@ -1167,7 +1183,7 @@ def test_calendar_data_rate_limit(client, db, monkeypatch):
 
     r = client.get("/calendar_data?month=3&year=2026")
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_reservation_rate_limit(client, db, monkeypatch):
@@ -1198,7 +1214,7 @@ def test_reservation_rate_limit(client, db, monkeypatch):
         },
     )
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_weekly_session_cancel_and_conflict(client, db, monkeypatch):
@@ -1301,7 +1317,7 @@ def test_weekly_session_cancel_current_blocked_when_attendance_exists(client, db
     )
     assert r.status_code == 409
     assert r.get_json() == {
-        "error": "Weekly classes can be canceled only before the end time and only if attendance has not been recorded."
+        "error": "Недељни часови се могу отказати само пре краја часа, ако присуство још није забележено."
     }
 
 

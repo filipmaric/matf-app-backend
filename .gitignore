@@ -16,6 +16,8 @@ data/app.db-wal
 codex
 static/filip@*/
 site/
+e2e/node_modules/
+e2e/test-results/
 RTK.md
 AGENTS.md
 REVIEWER_ACCESS.private.md

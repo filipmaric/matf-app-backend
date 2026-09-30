@@ -41,7 +41,7 @@ def test_rooms_rate_limit(client, db, monkeypatch):
 
     r = client.get("/rooms")
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}
 
 
 def test_occupancy_rate_limit(client, db, monkeypatch):
@@ -51,4 +51,4 @@ def test_occupancy_rate_limit(client, db, monkeypatch):
 
     r = client.get("/occupancy?date=2026-03-09")
     assert r.status_code == 429
-    assert r.get_json() == {"error": "Too many requests"}
+    assert r.get_json() == {"error": "Превише захтева. Покушајте поново касније."}

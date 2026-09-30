@@ -247,7 +247,7 @@ def my_reservations_json():
     semesters = fetch_semesters()
     selected_semester_id, selected_semester = select_semester(semester_id, semesters)
     if semester_id is not None and selected_semester is None:
-        abort(404, "semester not found")
+        abort(404, "Семестар није пронађен.")
 
     personal_reservations = personal_reservations_for_semester(current_user.username, selected_semester)
     course_sessions = []
@@ -281,7 +281,7 @@ def my_reservations_attendance_json():
     semesters = fetch_semesters()
     selected_semester_id, selected_semester = select_semester(semester_id, semesters)
     if semester_id is not None and selected_semester is None:
-        abort(404, "semester not found")
+        abort(404, "Семестар није пронађен.")
 
     personal_reservations = []
     if selected_semester_id:
@@ -315,7 +315,7 @@ def my_course_attendance_json():
     semesters = fetch_semesters()
     selected_semester_id, selected_semester = select_semester(semester_id, semesters)
     if semester_id is not None and selected_semester is None:
-        abort(404, "semester not found")
+        abort(404, "Семестар није пронађен.")
 
     courses = []
     if selected_semester_id:

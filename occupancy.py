@@ -117,11 +117,11 @@ def occupancy():
 
     date = request.args.get("date")
     if not date:
-        abort(400, "date param required YYYY-MM-DD")
+        abort(400, "Параметар датума је обавезан и мора бити у формату ГГГГ-ММ-ДД.")
     try:
         datetime.datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
-        abort(400, "invalid date format, expected YYYY-MM-DD")
+        abort(400, "Неисправан формат датума. Очекивани формат је ГГГГ-ММ-ДД.")
 
     kind, week_day, dow = check_day(date)
     result = {}

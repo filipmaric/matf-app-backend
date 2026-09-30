@@ -17,6 +17,7 @@ from config import (
     ATTENDANCE_PREVIOUS_CHALLENGE_ROUNDS,
     ATTENDANCE_SECRET,
     ATTENDANCE_ATTEMPT_TTL,
+    ATTENDANCE_SESSION_TTL,
     REVIEW_MODE,
 )
 from auth import RATE_LIMITS, check_if_admin, enforce_rate_limit, student_radius_auth
@@ -49,18 +50,18 @@ def attendance_review_demo_event(now=None):
     return {
         "event_id": 0,
         "room_id": 0,
-        "room_name": "Demo sala",
-        "room_building_name": "Demo zgrada",
+        "room_name": "Демо сала",
+        "room_building_name": "Демо зграда",
         "start_slot": start_slot,
         "end_slot": end_slot,
         "day_of_week": now.isoweekday() % 7,
         "course_id": 0,
-        "course_name": "Demo provera QR prijave",
+        "course_name": "Демо провера QR пријаве",
         "course_code": "DEMO",
         "course_type": "p",
-        "teacher_name": "Demo nastavnik",
+        "teacher_name": "Демо наставник",
         "teacher_username": "review-demo",
-        "semester_display_name": "Demo semestar",
+        "semester_display_name": "Демо семестар",
         "groups": "demo",
         "is_canceled": 0,
         "event_date": event_date,
@@ -897,6 +898,96 @@ def attendance_geofence_set_for_event(kind, event_id, event_date, enabled):
     return attendance_geofence_state_for_event(kind, event_id, event_date)
 
 
+def attendance_guest_registration_state_for_event(kind, event_id, event_date):
+    """Return whether unauthenticated username-only registration is enabled."""
+    if kind not in {"weekly", "reservation"}:
+        return {"enabled": False}
+    setting = query_db(
+        """
+        SELECT enabled
+        FROM attendance_guest_registration_settings
+        WHERE event_kind = ?
+          AND event_id = ?
+          AND event_date = ?
+        """,
+        (kind, event_id, event_date),
+        one=True,
+    )
+    return {"enabled": bool(setting["enabled"]) if setting is not None else False}
+
+
+def attendance_session_state_for_event(kind, event_id, event_date):
+    """Return whether the teacher explicitly started attendance for this event."""
+    if kind == "review":
+        return {"active": True, "expired": False, "updated_at": None}
+    if kind not in {"weekly", "reservation"}:
+        return {"active": False}
+    setting = query_db(
+        """
+        SELECT active,
+               updated_at,
+               CASE WHEN active = 1
+                         AND updated_at <= datetime('now', ?)
+                    THEN 1 ELSE 0 END AS expired
+        FROM attendance_session_settings
+        WHERE event_kind = ? AND event_id = ? AND event_date = ?
+        """,
+        (f"-{ATTENDANCE_SESSION_TTL} seconds", kind, event_id, event_date),
+        one=True,
+    )
+    expired = bool(setting["expired"]) if setting is not None else False
+    return {
+        "active": bool(setting["active"]) and not expired if setting is not None else False,
+        "expired": expired,
+        "updated_at": setting["updated_at"] if setting is not None else None,
+    }
+
+
+def attendance_session_set_for_event(kind, event_id, event_date, active):
+    """Persist the teacher-controlled attendance session state."""
+    execute_db(
+        """
+        INSERT INTO attendance_session_settings
+            (event_kind, event_id, event_date, active, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(event_kind, event_id, event_date) DO UPDATE SET
+            active = excluded.active,
+            updated_at = excluded.updated_at
+        """,
+        (kind, event_id, event_date, int(bool(active))),
+    )
+    return attendance_session_state_for_event(kind, event_id, event_date)
+
+
+def attendance_guest_registration_set_for_event(kind, event_id, event_date, enabled):
+    """Persist the username-only registration setting for one attendance event."""
+    execute_db(
+        """
+        INSERT INTO attendance_guest_registration_settings
+            (event_kind, event_id, event_date, enabled)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(event_kind, event_id, event_date) DO UPDATE SET
+            enabled = excluded.enabled
+        """,
+        (kind, event_id, event_date, int(bool(enabled))),
+    )
+    if enabled:
+        # Username-only registration intentionally does not collect or verify
+        # device coordinates, so the two modes must not be enabled together.
+        attendance_geofence_set_for_event(kind, event_id, event_date, False)
+    return attendance_guest_registration_state_for_event(kind, event_id, event_date)
+
+
+def attendance_student_exists(username):
+    """Return whether the supplied username belongs to a known student."""
+    row = query_db(
+        "SELECT 1 FROM students WHERE username = ?",
+        (username,),
+        one=True,
+    )
+    return row is not None
+
+
 def attendance_optional_coordinates_from_payload(payload):
     """Parse optional numeric coordinates from a request payload."""
     latitude = payload.get("latitude")
@@ -904,9 +995,27 @@ def attendance_optional_coordinates_from_payload(payload):
     if latitude is None or longitude is None:
         return None, None
     try:
-        return float(latitude), float(longitude)
+        latitude = float(latitude)
+        longitude = float(longitude)
     except (TypeError, ValueError):
         return None, None
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        return None, None
+    if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0:
+        return None, None
+    return latitude, longitude
+
+
+def attendance_json_object():
+    """Return a JSON object payload, or None for malformed/non-object JSON."""
+    payload = request.get_json(silent=True)
+    return payload if isinstance(payload, dict) else None
+
+
+def attendance_boolean_payload(payload, field):
+    """Read a real JSON boolean without accepting truthy strings or numbers."""
+    value = payload.get(field) if payload is not None else None
+    return value if isinstance(value, bool) else None
 
 
 def attendance_geofence_rejection_payload(latitude, longitude, closest):
@@ -971,7 +1080,7 @@ def attendance_token_is_valid(kind, event_id, event_date, token, now=None):
     now = now or datetime.datetime.now()
     current_bucket = attendance_token_bucket(now)
     for bucket in (current_bucket, current_bucket - 1):
-        if token == attendance_token_for_bucket(kind, event_id, event_date, bucket):
+        if hmac.compare_digest(token, attendance_token_for_bucket(kind, event_id, event_date, bucket)):
             return True
     return False
 
@@ -1096,9 +1205,13 @@ def attendance_join_view_token(kind, event_id, event_date, token):
         abort(404)
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({"error": "event not found"}), 404
+        return jsonify({"error": "Термин није пронађен."}), 404
+    if kind == 'weekly' and bool(row.get('is_canceled')):
+        return jsonify({"error_code": "attendance_canceled", "error": "Овај час је отказан."}), 409
     if not attendance_is_open_now(row):
         return jsonify({"error_code": "attendance_outside_class_time", "error": attendance_not_open_message()}), 403
+    if not attendance_session_state_for_event(kind, event_id, event_date)["active"]:
+        return jsonify({"error_code": "attendance_not_started", "error": "Наставник још није започео пријављивање."}), 403
     if not attendance_token_is_valid(kind, event_id, event_date, token):
         abort(404)
     response = make_response(
@@ -1140,11 +1253,13 @@ def attendance_challenge_data(kind, event_id, event_date):
 
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({'error': 'event not found'}), 404
+        return jsonify({'error': 'Термин није пронађен.'}), 404
     if kind == 'weekly' and bool(row.get('is_canceled')):
-        return jsonify({'error': 'this lecture occurrence is canceled'}), 409
+        return jsonify({'error_code': 'attendance_canceled', 'error': 'Овај час је отказан.'}), 409
     if not attendance_is_open_now(row):
         return jsonify({'error_code': 'attendance_outside_class_time', 'error': attendance_not_open_message()}), 403
+    if not attendance_session_state_for_event(kind, event_id, event_date)["active"]:
+        return jsonify({'error_code': 'attendance_not_started', 'error': 'Наставник још није започео пријављивање.'}), 403
     mobile_session = attendance_mobile_session_from_request()
     attendance_attempt_token = attendance_attempt_from_request(kind, event_id, event_date) or ""
     if mobile_session:
@@ -1176,11 +1291,16 @@ def attendance_challenge_data(kind, event_id, event_date):
         'attendance_geofence_available': geofence_state["available"],
         'attendance_geofence_enabled': geofence_state["enabled"],
         'attendance_geofence_warning': geofence_state["warning"],
+        'attendance_guest_registration_enabled': attendance_guest_registration_state_for_event(
+            kind, event_id, event_date
+        )["enabled"],
         'attendance_attempt_token': attendance_attempt_token,
     }
     if mobile_session:
         payload['attendance_locations'] = geofence_state["locations"]
     response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -1194,14 +1314,16 @@ def attendance_roster_data(kind, event_id, event_date):
 
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({'error': 'event not found'}), 404
+        return jsonify({'error': 'Термин није пронађен.'}), 404
     if not attendance_can_view(kind, row):
-        return jsonify({'error': 'Forbidden'}), 403
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
 
     open_now = attendance_is_open_now(row)
+    session_state = attendance_session_state_for_event(kind, event_id, event_date)
     geofence_state = attendance_geofence_state_for_event(kind, event_id, event_date, row=row)
 
     summary_only = request.args.get("summary", "").casefold() in {"1", "true", "yes"}
+    include_challenge = request.args.get("include_challenge", "1").casefold() not in {"0", "false", "no"}
     students = [] if summary_only else attendance_records_for_event(kind, event_id, event_date)
     student_count = (
         attendance_record_count_for_event(kind, event_id, event_date)
@@ -1214,19 +1336,29 @@ def attendance_roster_data(kind, event_id, event_date):
         'student_count': student_count,
         'can_view': True,
         'attendance_open': open_now,
+        'attendance_session_active': session_state["active"],
+        'attendance_session_expired': session_state["expired"],
         'attendance_geofence_available': geofence_state["available"],
         'attendance_geofence_enabled': geofence_state["enabled"],
         'attendance_geofence_warning': geofence_state["warning"],
+        'attendance_guest_registration_enabled': attendance_guest_registration_state_for_event(
+            kind, event_id, event_date
+        )["enabled"],
         **(
             {
                 'challenge': attendance_challenge_for_time(kind, event_id, event_date),
                 'join_token': attendance_join_token(kind, event_id, event_date),
             }
-            if open_now
+                if open_now and session_state["active"] and include_challenge
             else {}
         ),
     }
-    return jsonify(payload)
+    response = jsonify(payload)
+    # The payload contains a short-lived rotating QR token. Never let a
+    # browser or intermediary reuse an older roster/challenge response.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @bp.route('/attendance/<kind>/<int:event_id>/summary')
@@ -1237,14 +1369,14 @@ def attendance_summary_data(kind, event_id):
 
     event_dates = list(dict.fromkeys(request.args.getlist("date")))
     if not event_dates:
-        return jsonify({"error": "at least one date is required"}), 400
+        return jsonify({"error": "Потребан је бар један датум."}), 400
 
     for event_date in event_dates:
         row = attendance_event_row(kind, event_id, event_date)
         if not row:
-            return jsonify({"error": "event not found"}), 404
+            return jsonify({"error": "Термин није пронађен."}), 404
         if not attendance_can_view(kind, row):
-            return jsonify({"error": "Forbidden"}), 403
+            return jsonify({"error": "Приступ није дозвољен."}), 403
 
     return jsonify(
         {
@@ -1264,23 +1396,26 @@ def attendance_geofence_update(kind, event_id, event_date):
 
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({'error': 'event not found'}), 404
+        return jsonify({'error': 'Термин није пронађен.'}), 404
     if not attendance_can_view(kind, row):
-        return jsonify({'error': 'Forbidden'}), 403
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
+    if attendance_session_state_for_event(kind, event_id, event_date)["active"]:
+        return jsonify({'error': 'Подешавања није могуће мењати након почетка пријављивања.'}), 409
 
     geofence_state = attendance_geofence_state_for_event(kind, event_id, event_date, row=row)
     if not geofence_state["available"]:
         return jsonify({'error': 'Локација за ову учионицу није подешена.'}), 409
 
-    payload = request.get_json(silent=True) or {}
-    if "enabled" not in payload:
-        return jsonify({'error': 'enabled is required'}), 400
+    payload = attendance_json_object()
+    enabled = attendance_boolean_payload(payload, "enabled")
+    if enabled is None:
+        return jsonify({'error': 'Потребно је навести да ли је опција укључена.'}), 400
 
     state = attendance_geofence_set_for_event(
         kind,
         event_id,
         event_date,
-        bool(payload.get("enabled")),
+        enabled,
     )
     return jsonify({
         'success': True,
@@ -1288,6 +1423,66 @@ def attendance_geofence_update(kind, event_id, event_date):
         'attendance_geofence_enabled': state["enabled"],
         'attendance_geofence_warning': state["warning"],
     })
+
+
+@bp.route('/attendance/<kind>/<int:event_id>/<event_date>/guest-registration', methods=['POST'])
+def attendance_guest_registration_update(kind, event_id, event_date):
+    """Enable or disable username-only registration for one attendance event."""
+    if kind not in {"weekly", "reservation"}:
+        abort(404)
+
+    row = attendance_event_row(kind, event_id, event_date)
+    if not row:
+        return jsonify({'error': 'Термин није пронађен.'}), 404
+    if not attendance_can_view(kind, row):
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
+    if attendance_session_state_for_event(kind, event_id, event_date)["active"]:
+        return jsonify({'error': 'Подешавања није могуће мењати након почетка пријављивања.'}), 409
+
+    payload = attendance_json_object()
+    enabled = attendance_boolean_payload(payload, "enabled")
+    if enabled is None:
+        return jsonify({'error': 'Потребно је навести да ли је опција укључена.'}), 400
+
+    state = attendance_guest_registration_set_for_event(
+        kind,
+        event_id,
+        event_date,
+        enabled,
+    )
+    geofence_state = attendance_geofence_state_for_event(kind, event_id, event_date, row=row)
+    return jsonify({
+        'success': True,
+        'attendance_guest_registration_enabled': state["enabled"],
+        'attendance_geofence_available': geofence_state["available"],
+        'attendance_geofence_enabled': geofence_state["enabled"],
+        'attendance_geofence_warning': geofence_state["warning"],
+    })
+
+
+@bp.route('/attendance/<kind>/<int:event_id>/<event_date>/session', methods=['POST'])
+def attendance_session_update(kind, event_id, event_date):
+    """Start or stop the teacher-controlled attendance session."""
+    if kind not in {"weekly", "reservation"}:
+        abort(404)
+
+    row = attendance_event_row(kind, event_id, event_date)
+    if not row:
+        return jsonify({'error': 'Термин није пронађен.'}), 404
+    if not attendance_can_view(kind, row):
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
+
+    payload = attendance_json_object()
+    active = attendance_boolean_payload(payload, "active")
+    if active is None:
+        return jsonify({'error': 'Потребно је навести да ли је пријављивање активно.'}), 400
+    if active and kind == 'weekly' and bool(row.get('is_canceled')):
+        return jsonify({'error_code': 'attendance_canceled', 'error': 'Овај час је отказан.'}), 409
+    if active and not attendance_is_open_now(row):
+        return jsonify({'error_code': 'attendance_outside_class_time', 'error': attendance_not_open_message()}), 403
+
+    state = attendance_session_set_for_event(kind, event_id, event_date, active)
+    return jsonify({'success': True, 'attendance_session_active': state['active']})
 
 
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>/spot_check', methods=['GET'])
@@ -1298,9 +1493,9 @@ def attendance_spot_check_data(kind, event_id, event_date):
 
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({'error': 'event not found'}), 404
+        return jsonify({'error': 'Термин није пронађен.'}), 404
     if not attendance_can_view(kind, row):
-        return jsonify({'error': 'Forbidden'}), 403
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
     if not attendance_is_open_now(row):
         return jsonify({'error_code': 'attendance_outside_class_time', 'error': attendance_not_open_message()}), 403
 
@@ -1308,7 +1503,7 @@ def attendance_spot_check_data(kind, event_id, event_date):
     try:
         limit_value = max(1, min(20, int(limit)))
     except (TypeError, ValueError):
-        return jsonify({'error': 'invalid limit'}), 400
+        return jsonify({'error': 'Неисправан број ставки.'}), 400
 
     students = attendance_spot_check_candidates_for_event(kind, event_id, event_date, limit=limit_value)
     return jsonify({
@@ -1324,6 +1519,39 @@ def attendance_spot_check_data(kind, event_id, event_date):
     })
 
 
+@bp.route('/attendance/<kind>/<int:event_id>/<event_date>/student/<int:record_id>', methods=['DELETE'])
+def attendance_student_delete(kind, event_id, event_date, record_id):
+    """Remove one successfully registered student from an attendance event."""
+    if not attendance_kind_valid(kind):
+        abort(404)
+
+    row = attendance_event_row(kind, event_id, event_date)
+    if not row:
+        return jsonify({'error': 'Термин није пронађен.'}), 404
+    if not attendance_can_view(kind, row):
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
+
+    existing = query_db(
+        """
+        SELECT id FROM attendance_records
+        WHERE id = ? AND event_kind = ? AND event_id = ? AND event_date = ?
+        """,
+        (record_id, kind, event_id, event_date),
+        one=True,
+    )
+    if not existing:
+        return jsonify({'error': 'Пријава студента није пронађена.'}), 404
+
+    execute_db(
+        """
+        DELETE FROM attendance_records
+        WHERE id = ? AND event_kind = ? AND event_id = ? AND event_date = ?
+        """,
+        (record_id, kind, event_id, event_date),
+    )
+    return jsonify({'success': True})
+
+
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>/spot_check', methods=['POST'])
 def attendance_spot_check_submit(kind, event_id, event_date):
     """Store the shortlist entries that the teacher did not confirm."""
@@ -1332,17 +1560,21 @@ def attendance_spot_check_submit(kind, event_id, event_date):
 
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({'error': 'event not found'}), 404
+        return jsonify({'error': 'Термин није пронађен.'}), 404
     if not attendance_can_view(kind, row):
-        return jsonify({'error': 'Forbidden'}), 403
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
     if not attendance_is_open_now(row):
         return jsonify({'error_code': 'attendance_outside_class_time', 'error': attendance_not_open_message()}), 403
 
-    payload = request.get_json(silent=True) or {}
+    payload = attendance_json_object()
+    if payload is None:
+        return jsonify({'error': 'Тело захтева мора бити JSON објекат.'}), 400
     selected_usernames = payload.get('selected_usernames') or []
     confirmed_usernames = payload.get('confirmed_usernames') or []
     if not isinstance(selected_usernames, list) or not isinstance(confirmed_usernames, list):
-        return jsonify({'error': 'selected_usernames_and_confirmed_usernames_are_required'}), 400
+        return jsonify({'error': 'Потребно је навести изабране и потврђене студенте.'}), 400
+    if any(not isinstance(username, str) for username in selected_usernames + confirmed_usernames):
+        return jsonify({'error': 'Корисничка имена морају бити текстуалне вредности.'}), 400
 
     teacher_username = getattr(current_user, 'username', '') or getattr(current_user, 'id', '')
     recorded = attendance_spot_check_record_misses(
@@ -1370,25 +1602,43 @@ def attendance_join_submit(kind, event_id, event_date):
 
     row = attendance_event_row(kind, event_id, event_date)
     if not row:
-        return jsonify({'error': 'event not found'}), 404
+        return jsonify({'error': 'Термин није пронађен.'}), 404
     if kind == 'weekly' and bool(row.get('is_canceled')):
-        return jsonify({'error': 'this lecture occurrence is canceled'}), 409
+        return jsonify({'error_code': 'attendance_canceled', 'error': 'Овај час је отказан.'}), 409
     if not attendance_is_open_now(row):
         return jsonify({'error_code': 'attendance_outside_class_time', 'error': attendance_not_open_message()}), 403
-    data = request.get_json() or {}
+    if not attendance_session_state_for_event(kind, event_id, event_date)["active"]:
+        return jsonify({'error_code': 'attendance_not_started', 'error': 'Наставник још није започео пријављивање.'}), 403
+    data = attendance_json_object()
+    if data is None:
+        return jsonify({'error': 'Тело захтева мора бити JSON објекат.'}), 400
     selected_code = data.get('selected_code')
     mobile_session = attendance_mobile_session_from_request()
     geofence_state = attendance_geofence_state_for_event(kind, event_id, event_date, row=row)
+    guest_registration_enabled = (
+        attendance_guest_registration_state_for_event(kind, event_id, event_date)["enabled"]
+        if not mobile_session
+        else False
+    )
     latitude, longitude = attendance_optional_coordinates_from_payload(data)
     if mobile_session:
-        attempt_token = data.get('attendance_attempt_token', '').strip() or data.get('join_token', '').strip()
+        supplied_username = data.get('username')
+        if supplied_username is not None and not isinstance(supplied_username, str):
+            return jsonify({'error': 'Корисничко име мора бити текстуална вредност.'}), 400
+        attendance_attempt_token = data.get('attendance_attempt_token', '')
+        join_token = data.get('join_token', '')
+        if not isinstance(attendance_attempt_token, str) or not isinstance(join_token, str):
+            return jsonify({'error': 'Токен пријаве није важећи.'}), 400
+        attempt_token = attendance_attempt_token.strip() or join_token.strip()
         if not attempt_token:
-            return jsonify({'error_code': 'attendance_attempt_required', 'error': 'attendance attempt token is required'}), 400
+            return jsonify({'error_code': 'attendance_attempt_required', 'error': 'Потребан је токен покушаја пријаве.'}), 400
         if attendance_attempt_is_blocked_raw(attempt_token):
             return jsonify({'error_code': 'attendance_attempt_blocked', 'error': attendance_attempt_blocked_message()}), 403
         if not attendance_validate_attempt_token(kind, event_id, event_date, attempt_token):
             return jsonify({'error_code': 'attendance_attempt_expired', 'error': 'Покушај је истекао. Поново скенирајте QR код.'}), 403
         username = mobile_session["user"]["radius_username"].strip()
+        if supplied_username is not None and supplied_username.strip() != username:
+            return jsonify({'error': 'Корисничко име не одговара пријављеном кориснику.'}), 403
         password = None
         geofence_checked = bool(geofence_state["available"] and geofence_state["enabled"])
         if geofence_checked and not geofence_state["locations"]:
@@ -1411,17 +1661,30 @@ def attendance_join_submit(kind, event_id, event_date):
             return jsonify({'error_code': 'attendance_attempt_blocked', 'error': attendance_attempt_blocked_message()}), 403
         if attempt_status != "valid":
             return jsonify({'error_code': 'attendance_attempt_expired', 'error': 'Покушај је истекао. Поново скенирајте QR код.'}), 403
-        username = data.get('username', '').strip()
-        password = data.get('password', '')
+        username = data.get('username', '')
+        password = None if guest_registration_enabled else data.get('password', '')
+        if not isinstance(username, str) or (password is not None and not isinstance(password, str)):
+            return jsonify({'error': 'Корисничко име и лозинка морају бити текстуалне вредности.'}), 400
+        username = username.strip()
         geofence_checked = False
 
-    if not username or (password is not None and not password):
-        return jsonify({'error': 'username and password are required'}), 400
+    if not username:
+        return jsonify({'error': 'Корисничко име је обавезно.'}), 400
+    if password is not None and not password:
+        return jsonify({'error': 'Корисничко име и лозинка су обавезни.'}), 400
 
+    if guest_registration_enabled and not attendance_student_exists(username):
+        return jsonify({
+            'error_code': 'attendance_unknown_username',
+            'error': 'Корисничко име не постоји.',
+        }), 404
+
+    if isinstance(selected_code, bool):
+        selected_code = None
     try:
         selected_code = int(selected_code)
     except (TypeError, ValueError):
-        return jsonify({'error_code': 'attendance_selected_code_required', 'error': 'selected code is required'}), 400
+        return jsonify({'error_code': 'attendance_selected_code_required', 'error': 'Број за потврду је обавезан.'}), 400
 
     if not attendance_code_is_valid(kind, event_id, event_date, selected_code):
         state = attendance_attempt_record_failure(attempt_token)
@@ -1430,7 +1693,7 @@ def attendance_join_submit(kind, event_id, event_date):
         return jsonify({'error_code': 'attendance_wrong_code', 'error': 'Погрешан број. Сачекајте нови круг.'}), 409
 
     if password is not None and not student_radius_auth(username, password):
-        return jsonify({'error': 'Invalid credentials'}), 401
+        return jsonify({'error': 'Корисничко име или лозинка нису исправни.'}), 401
 
     failure_state = attendance_attempt_failure_state_raw(attempt_token) or {}
     attendance_attempt_clear_failures(attempt_token)

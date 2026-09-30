@@ -38,21 +38,21 @@ def _create_single_reservation(data, username, is_service, commit=True):
     desc = data.get('description', '')
 
     if not all([room_id is not None, date, start is not None, end is not None]):
-        abort(400, 'missing fields')
+        abort(400, 'Недостају обавезна поља.')
 
     try:
         datetime.datetime.strptime(date, '%Y-%m-%d').date()
     except ValueError:
-        abort(400, 'invalid date format, expected YYYY-MM-DD')
+        abort(400, 'Неисправан формат датума. Очекивани формат је ГГГГ-ММ-ДД.')
 
     if not (isinstance(start, int) and isinstance(end, int) and start < end):
-        abort(400, 'invalid slots')
+        abort(400, 'Неисправно изабрани термини.')
 
     room = query_db('SELECT id, type FROM rooms WHERE id = ?', (room_id,), one=True)
     if room == None:
-        abort(400, f'room not found {room_id}')
+        abort(400, f'Учионица {room_id} није пронађена.')
     if not is_reservable_room(room["type"]):
-        abort(400, "room is not reservable")
+        abort(400, "Ова учионица није доступна за резервацију.")
 
     (kind, week_day, dow) = check_day(date)
 
@@ -73,7 +73,7 @@ def _create_single_reservation(data, username, is_service, commit=True):
         ''', (date, room_id, dow, date, end, start))
 
         if wc_conf:
-            abort(409, 'conflict with regular weekly class')
+            abort(409, 'Постоји сукоб са редовним недељним часом.')
 
     res_conf = query_db('''
         SELECT 1 FROM reservations
@@ -82,7 +82,7 @@ def _create_single_reservation(data, username, is_service, commit=True):
     ''', (room_id, date, end, start))
 
     if res_conf:
-        abort(409, 'conflict with existing reservation')
+        abort(409, 'Постоји сукоб са постојећом резервацијом.')
 
     try:
         rid = execute_db('''
@@ -91,7 +91,7 @@ def _create_single_reservation(data, username, is_service, commit=True):
         ''', (room_id, username, date, start, end, desc), commit=commit)
     except sqlite3.IntegrityError as exc:
         if "reservation_overlap" in str(exc):
-            abort(409, 'conflict with existing reservation')
+            abort(409, 'Постоји сукоб са постојећом резервацијом.')
         raise
 
     return rid
@@ -132,7 +132,7 @@ def bulk_reservations():
     reservations = payload.get('reservations')
 
     if not reservations or not isinstance(reservations, list):
-        abort(400, 'reservations must be a list')
+        abort(400, 'Резервације морају бити наведене као листа.')
 
     is_service = getattr(g, "service_auth", False)
 
@@ -153,9 +153,9 @@ def bulk_reservations():
     except Exception as e:
         conn.rollback()
         if isinstance(e, HTTPException):
-            return jsonify({'error': 'bulk reservation failed'}), e.code
+            return jsonify({'error': 'Групна резервација није успела.'}), e.code
         current_app.logger.exception("Bulk reservation failed")
-        return jsonify({'error': 'bulk reservation failed'}), 409
+        return jsonify({'error': 'Групна резервација није успела.'}), 409
 
     return jsonify({
         'created': len(created_ids),
@@ -233,18 +233,18 @@ def cancel_reservation(res_id):
     # Check whether the reservation exists and belongs to the current user
     row = query_db('SELECT username, date FROM reservations WHERE id = ?', (res_id,), one=True)
     if not row:
-        return jsonify({'error':'Reservation not found'}), 404
+        return jsonify({'error':'Резервација није пронађена.'}), 404
 
     is_service = getattr(g, "service_auth", False)
     if not is_service and row['username'] != current_user.username and not check_if_admin(current_user.username):
-        return jsonify({'error':'Forbidden'}), 403
+        return jsonify({'error':'Приступ није дозвољен.'}), 403
 
     if not _can_cancel_on_date(
         row['date'],
         _attendance_count_for_event('reservation', res_id, row['date']),
     ):
         return jsonify({
-            'error': 'Reservations can be canceled only on the current or future dates and only if attendance has not been recorded.'
+            'error': 'Резервације се могу отказати само за данашњи или будући датум, ако присуство још није забележено.'
         }), 409
 
     # Delete the reservation
@@ -268,18 +268,18 @@ def cancel_weekly_session_for_date():
     date = data.get('date')
 
     if not ws_id or not date:
-        return jsonify({'error': 'weekly_session_id and date are required'}), 400
+        return jsonify({'error': 'Идентификатор недељног термина и датум су обавезни.'}), 400
 
     # validate date format
     try:
         _ = datetime.datetime.strptime(date, '%Y-%m-%d').date()
     except ValueError:
-        return jsonify({'error': 'invalid date format, expected YYYY-MM-DD'}), 400
+        return jsonify({'error': 'Неисправан формат датума. Очекивани формат је ГГГГ-ММ-ДД.'}), 400
 
     # resolve working day and weekday index
     kind, week_day, dow = check_day(date)
     if not is_schedule_day(kind):
-        return jsonify({'error': 'selected date is not a working day'}), 400
+        return jsonify({'error': 'Изабрани датум није радни дан.'}), 400
 
     # verify that this weekly session is active on that date (semester bounds and weekday)
     row = query_db(
@@ -302,7 +302,7 @@ def cancel_weekly_session_for_date():
     )
 
     if not row:
-        return jsonify({'error': 'weekly session not found for given date'}), 404
+        return jsonify({'error': 'Недељни термин није пронађен за изабрани датум.'}), 404
 
     if not _can_cancel_weekly_on_date(
         date,
@@ -310,7 +310,7 @@ def cancel_weekly_session_for_date():
         _attendance_count_for_event('weekly', ws_id, date),
     ):
         return jsonify({
-            'error': 'Weekly classes can be canceled only before the end time and only if attendance has not been recorded.'
+            'error': 'Недељни часови се могу отказати само пре краја часа, ако присуство још није забележено.'
         }), 409
 
     is_service = getattr(g, "service_auth", False)
@@ -318,7 +318,7 @@ def cancel_weekly_session_for_date():
     # Allowed: the teacher who teaches the class, an administrator, or a service account
     if not is_service and current_user.is_authenticated:
         if not (current_user.username == row['teacher_username'] or check_if_admin(current_user.username)):
-            return jsonify({'error': 'Forbidden'}), 403
+            return jsonify({'error': 'Приступ није дозвољен.'}), 403
 
     username = current_user.username if (current_user.is_authenticated and not is_service) else 'service'
 
@@ -347,7 +347,7 @@ def cancel_weekly_session_for_date():
         )
         if res_conf:
             return jsonify({
-                'error': 'Cannot restore the canceled class because a reservation exists in this slot.'
+                'error': 'Отказани час није могуће обновити јер у овом термину постоји резервација.'
             }), 409
 
         execute_db(

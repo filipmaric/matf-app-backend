@@ -97,13 +97,18 @@ export const API = {
     async getAttendanceChallenge(kind, eventId, eventDate) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/challenge`), {
             credentials: "same-origin",
+            cache: "no-store",
         });
         return handleResponse(res, "Грешка при учитавању података о присуству");
     },
-    async getAttendanceRoster(kind, eventId, eventDate, summaryOnly = false) {
-        const suffix = summaryOnly ? '?summary=1' : '';
+    async getAttendanceRoster(kind, eventId, eventDate, summaryOnly = false, includeChallenge = true) {
+        const params = new URLSearchParams();
+        if (summaryOnly) params.set('summary', '1');
+        if (!includeChallenge) params.set('include_challenge', '0');
+        const suffix = params.toString() ? `?${params.toString()}` : '';
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/data${suffix}`), {
             credentials: "same-origin",
+            cache: "no-store",
         });
         return handleResponse(res, "Грешка при учитавању листе присутних");
     },
@@ -124,6 +129,26 @@ export const API = {
         });
         return handleResponse(res, "Грешка при чувању провере локације");
     },
+    async setAttendanceGuestRegistration(kind, eventId, eventDate, enabled) {
+        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/guest-registration`), {
+            method: "POST",
+            headers: withCsrfHeaders({ "Content-Type": "application/json" }),
+            credentials: "same-origin",
+            body: JSON.stringify({ enabled }),
+        });
+        return handleResponse(res, "Грешка при чувању режима пријаве");
+    },
+    async setAttendanceSession(kind, eventId, eventDate, active) {
+        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/session`), {
+            method: "POST",
+            headers: withCsrfHeaders({ "Content-Type": "application/json" }),
+            credentials: "same-origin",
+            body: JSON.stringify({ active }),
+        });
+        return handleResponse(res, active
+            ? "Грешка при покретању пријављивања"
+            : "Грешка при заустављању пријављивања");
+    },
     async getAttendanceSpotCheck(kind, eventId, eventDate, limit = 5) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/spot_check?limit=${encodeURIComponent(limit)}`), {
             credentials: "same-origin",
@@ -138,6 +163,14 @@ export const API = {
             body: JSON.stringify(body),
         });
         return handleResponse(res, "Грешка при чувању провере присуства");
+    },
+    async deleteAttendanceRecord(kind, eventId, eventDate, recordId) {
+        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/student/${recordId}`), {
+            method: "DELETE",
+            headers: withCsrfHeaders(),
+            credentials: "same-origin",
+        });
+        return handleResponse(res, "Грешка при брисању пријаве студента");
     },
     async submitAttendance(kind, eventId, eventDate, body) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/join`), {

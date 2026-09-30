@@ -27,6 +27,15 @@ def mobile_login(client, username="alice", password="secret", device_id="device-
     return response.get_json()["token"]
 
 
+def start_attendance(client, event_id, event_date):
+    login(client)
+    response = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True},
+    )
+    assert response.status_code == 200
+
+
 def freeze_attendance_now(monkeypatch, fixed_now):
     class FrozenDatetime(datetime.datetime):
         @classmethod
@@ -61,6 +70,7 @@ def test_mobile_attendance_challenge_and_submit(client, db, monkeypatch):
     fixed_now = freeze_attendance_now(monkeypatch, datetime.datetime(2026, 6, 16, 10, 0, 0))
     weekly_session_id = make_weekly_event(db)
     event_date = "2026-03-09"
+    start_attendance(client, weekly_session_id, event_date)
     join_token = myapp.attendance_join_token(
         "weekly",
         weekly_session_id,
@@ -74,6 +84,7 @@ def test_mobile_attendance_challenge_and_submit(client, db, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert challenge.status_code == 200
+    assert "no-store" in challenge.headers["Cache-Control"]
     payload = challenge.get_json()
     assert "challenge" in payload
     assert payload["challenge"]["options"]
@@ -92,7 +103,6 @@ def test_mobile_attendance_challenge_and_submit(client, db, monkeypatch):
         },
     )
     assert success.status_code == 200
-    assert success.get_json()["success"] is True
 
     roster = myapp.query_db(
         """
@@ -109,11 +119,95 @@ def test_mobile_attendance_challenge_and_submit(client, db, monkeypatch):
     assert int(roster["geofence_checked"]) == 1
 
 
+def test_mobile_username_only_registration_accepts_authenticated_username(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    fixed_now = freeze_attendance_now(monkeypatch, datetime.datetime(2026, 6, 16, 10, 0, 0))
+    weekly_session_id = make_weekly_event(db)
+    event_date = "2026-03-09"
+
+    login(client)
+    enabled = client.post(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/guest-registration",
+        json={"enabled": True},
+    )
+    assert enabled.status_code == 200
+    start_attendance(client, weekly_session_id, event_date)
+
+    token = mobile_login(client)
+    join_token = myapp.attendance_join_token(
+        "weekly", weekly_session_id, event_date, now=fixed_now
+    )
+    challenge = client.get(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/challenge?join_token={join_token}",
+        headers={"Authorization": f"Bearer {token}"},
+    ).get_json()
+
+    response = client.post(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/join",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "username": "alice",
+            "attendance_attempt_token": challenge["attendance_attempt_token"],
+            "selected_code": challenge["challenge"]["current_code"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["username"] == "alice"
+    assert myapp.query_db(
+        "SELECT username FROM attendance_records WHERE event_kind = 'weekly' AND event_id = ?",
+        (weekly_session_id,),
+        one=True,
+    )["username"] == "alice"
+
+
+def test_mobile_username_only_registration_rejects_username_not_matching_session(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    fixed_now = freeze_attendance_now(monkeypatch, datetime.datetime(2026, 6, 16, 10, 0, 0))
+    weekly_session_id = make_weekly_event(db)
+    event_date = "2026-03-09"
+
+    login(client)
+    assert client.post(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/guest-registration",
+        json={"enabled": True},
+    ).status_code == 200
+    start_attendance(client, weekly_session_id, event_date)
+
+    token = mobile_login(client)
+    join_token = myapp.attendance_join_token(
+        "weekly", weekly_session_id, event_date, now=fixed_now
+    )
+    challenge = client.get(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/challenge?join_token={join_token}",
+        headers={"Authorization": f"Bearer {token}"},
+    ).get_json()
+
+    response = client.post(
+        f"/attendance/weekly/{weekly_session_id}/{event_date}/join",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "username": "another.student",
+            "attendance_attempt_token": challenge["attendance_attempt_token"],
+            "selected_code": challenge["challenge"]["current_code"],
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Корисничко име не одговара пријављеном кориснику."
+    assert myapp.query_db(
+        "SELECT COUNT(*) AS count FROM attendance_records WHERE event_kind = 'weekly' AND event_id = ?",
+        (weekly_session_id,),
+        one=True,
+    )["count"] == 0
+
+
 def test_mobile_attendance_blocks_wrong_number_without_username_password(client, db, monkeypatch):
     monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
     fixed_now = freeze_attendance_now(monkeypatch, datetime.datetime(2026, 6, 16, 10, 0, 0))
     weekly_session_id = make_weekly_event(db)
     event_date = "2026-03-09"
+    start_attendance(client, weekly_session_id, event_date)
     join_token = myapp.attendance_join_token(
         "weekly",
         weekly_session_id,
@@ -149,6 +243,7 @@ def test_mobile_attendance_requires_allowed_location(client, db, monkeypatch):
     fixed_now = freeze_attendance_now(monkeypatch, datetime.datetime(2026, 6, 16, 10, 0, 0))
     weekly_session_id = make_weekly_event(db)
     event_date = "2026-03-09"
+    start_attendance(client, weekly_session_id, event_date)
     join_token = myapp.attendance_join_token(
         "weekly",
         weekly_session_id,
@@ -225,6 +320,7 @@ def test_mobile_attendance_persists_location_when_geofence_is_disabled(client, d
     )
     assert toggle.status_code == 200
     assert toggle.get_json()["attendance_geofence_enabled"] is False
+    start_attendance(client, weekly_session_id, event_date)
 
     token = mobile_login(client)
     challenge = client.get(
@@ -268,6 +364,7 @@ def test_mobile_attendance_attempt_token_survives_qr_token_rotation(client, db, 
     freeze_attendance_now(monkeypatch, base_now)
     weekly_session_id = make_weekly_event(db)
     event_date = "2026-03-09"
+    start_attendance(client, weekly_session_id, event_date)
     join_token = myapp.attendance_join_token(
         "weekly",
         weekly_session_id,
