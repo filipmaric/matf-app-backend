@@ -14,8 +14,17 @@ let pollInFlight = false;
 const QR_SESSION_DURATION_MS = 2 * 60 * 1000;
 
 function buildJoinUrl(kind, eventId, eventDate, token) {
-    const basePath = window.APP_CONFIG?.BASE_PATH || '';
-    return `${window.location.origin}${basePath}/attendance/${kind}/${eventId}/${eventDate}/join/${token}`;
+    const configuredBasePath = String(window.APP_CONFIG?.BASE_PATH || '').replace(/\/+$/, '');
+    const attendanceMarker = '/attendance/';
+    const markerIndex = window.location.pathname.indexOf(attendanceMarker);
+    const inferredBasePath = markerIndex > 0
+        ? window.location.pathname.slice(0, markerIndex).replace(/\/+$/, '')
+        : '';
+    const basePath = configuredBasePath && configuredBasePath !== '/'
+        ? configuredBasePath
+        : inferredBasePath;
+    const path = `${basePath}/attendance/${kind}/${eventId}/${eventDate}/join/${token}`;
+    return new URL(path, window.location.origin).toString();
 }
 
 function formatEventTitle(event) {

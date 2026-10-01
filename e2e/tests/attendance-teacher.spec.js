@@ -30,6 +30,11 @@ test.describe('teacher attendance page', () => {
     expect(externalQrRequests).toEqual([]);
   });
 
+  test('includes the mounted application prefix in the QR link', async ({ page }) => {
+    const qrLink = page.locator('.attendance-qr-box a');
+    await expect(qrLink).toHaveAttribute('href', /\/attendance\/review\/0\/\d{4}-\d{2}-\d{2}\/join\//);
+  });
+
   test('logs in as a teacher and starts and stops attendance', async ({ page }) => {
     await page.goto('/');
     await page.locator('#username').fill('e2e-teacher');
