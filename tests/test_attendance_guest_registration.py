@@ -58,6 +58,30 @@ def test_guest_registration_is_disabled_by_default(client, db, monkeypatch):
     assert response.get_json()["error"] == "Корисничко име и лозинка су обавезни."
 
 
+def test_qr_join_redirect_preserves_application_root(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    monkeypatch.setitem(client.application.config, "APPLICATION_ROOT", "/matf-app")
+    event_id, event_date = make_event(db)
+    login(client)
+
+    started = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True},
+    )
+    assert started.status_code == 200
+    join_token = myapp.attendance_join_token("weekly", event_id, event_date)
+
+    response = client.get(
+        f"/attendance/weekly/{event_id}/{event_date}/join/{join_token}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == (
+        f"/matf-app/attendance/weekly/{event_id}/{event_date}/join"
+    )
+
+
 def test_attendance_requires_explicit_teacher_start(client, db, monkeypatch):
     monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
     event_id, event_date = make_event(db)

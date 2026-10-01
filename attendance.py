@@ -8,7 +8,7 @@ import math
 import random
 import secrets
 
-from flask import Blueprint, abort, jsonify, make_response, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, jsonify, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
 from config import (
     ATTENDANCE_CHALLENGE_TTL,
@@ -1214,14 +1214,18 @@ def attendance_join_view_token(kind, event_id, event_date, token):
         return jsonify({"error_code": "attendance_not_started", "error": "Наставник још није започео пријављивање."}), 403
     if not attendance_token_is_valid(kind, event_id, event_date, token):
         abort(404)
-    response = make_response(
-        redirect(url_for(
-            'attendance.attendance_join_view',
-            kind=kind,
-            event_id=event_id,
-            event_date=event_date,
-        ))
+    join_path = url_for(
+        'attendance.attendance_join_view',
+        kind=kind,
+        event_id=event_id,
+        event_date=event_date,
     )
+    application_root = current_app.config.get("APPLICATION_ROOT", "/").rstrip("/")
+    if application_root and not (
+        join_path == application_root or join_path.startswith(f"{application_root}/")
+    ):
+        join_path = application_root + join_path
+    response = make_response(redirect(join_path))
     return attendance_make_attempt_response(response, kind, event_id, event_date)
 
 
