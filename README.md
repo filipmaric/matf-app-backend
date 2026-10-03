@@ -337,8 +337,7 @@ python scripts/import/import_calendar.py \
 ```
 
 The import replaces calendar rows for the workbook's academic year (1 October through
-30 September). Existing databases are migrated from the legacy `is_working` column to
-semantic `kind` values automatically.
+30 September) and writes semantic `kind` values directly.
 
 Expected line format:
 

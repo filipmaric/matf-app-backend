@@ -1,0 +1,32 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<header class="site-header">
+  <div class="site-header-top">
+    <div class="site-brand">
+      {% if active_page != 'home' %}
+        <a href="{{ app_url_for('main.index') }}">Резервације учионица</a>
+      {% endif %}
+      {% if page_title %}<h1>{{ page_title }}</h1>{% endif %}
+    </div>
+
+    <div id="auth-container" class="auth-panel">
+      <form id="login-form" autocomplete="off" autocapitalize="off" autocorrect="off">
+        <input type="text" id="username" name="username" placeholder="Корисничко име" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <input type="password" id="password" name="password" placeholder="Лозинка" required autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button type="submit">Пријава</button>
+      </form>
+      <div id="logout-form" style="display:none">
+        <p id="login-info"></p>
+        <button id="logout" type="button">Одјава</button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="main-navigation" aria-label="Главна навигација">
+    <p id="my-reservations-wrap" style="display:none">
+      <a class="{% if active_page == 'reservations' %}active{% endif %}" href="{{ app_url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
+    </p>
+    <p id="oral-exams-wrap" style="display:none">
+      <a class="{% if active_page == 'oral-exams' %}active{% endif %}" href="{{ app_url_for('oral_exam_views.oral_exams_view') }}">Усмени испити</a>
+    </p>
+  </nav>
+</header>

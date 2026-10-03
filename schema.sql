@@ -463,3 +463,22 @@ CREATE TABLE mobile_devices (
 
 CREATE INDEX idx_mobile_devices_student_enabled
     ON mobile_devices(student_username, enabled);
+
+-- Cache validators for timetable and student-enrollment responses.
+-- The application installs the accompanying invalidation triggers in db.py.
+CREATE TABLE timetable_revisions (
+    semester_id INTEGER PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+);
+
+CREATE TABLE student_enrollment_revisions (
+    student_username TEXT NOT NULL,
+    semester_id INTEGER NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY(student_username, semester_id),
+    FOREIGN KEY(student_username) REFERENCES students(username) ON DELETE CASCADE,
+    FOREIGN KEY(semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+);

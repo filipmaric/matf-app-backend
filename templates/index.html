@@ -9,47 +9,17 @@
 </head>
 <body>
   <main class="page-shell main-page-shell">
-    <header class="main-page-header">
-      <div class="main-page-title">
-        <h1>Резервације учионица</h1>
+    {% set page_title = 'Резервације учионица' %}
+    {% set active_page = 'home' %}
+    {% include '_site_header.html' %}
+    <div class="date-toolbar">
+      <label for="date-input">Датум</label>
+      <div class="date-control-inputs">
+        <button id="date-prev" type="button" aria-label="Претходни дан">&lt;&lt;</button>
+        <input type="date" id="date-input" value="">
+        <button id="date-next" type="button" aria-label="Следећи дан">&gt;&gt;</button>
       </div>
-
-      <section class="main-toolbar" aria-label="Основне контроле">
-        <div class="main-toolbar-row main-toolbar-row-auth">
-          <div id="auth-container" class="auth-panel">
-            <form id="login-form" autocomplete="off" autocapitalize="off" autocorrect="off">
-                <input type="text" id="username" name="username" placeholder="Корисничко име" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-                <input type="password" id="password" name="password" placeholder="Лозинка" required autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
-                <button type="submit">Пријава</button>
-            </form>
-
-            <div id="logout-form" style="display:none">
-              <p id="login-info"></p>
-              <button id="logout">Одјава</button>
-            </div>
-          </div>
-
-          <p id="my-reservations-wrap" class="toolbar-link-wrap" style="display:none">
-            <a id="my-reservations-link" href="{{ app_url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
-          </p>
-          <p id="oral-exams-wrap" class="toolbar-link-wrap" style="display:none">
-            <a id="oral-exams-link" href="{{ app_url_for('oral_exam_views.oral_exams_view') }}">Усмени испити</a>
-          </p>
-
-        </div>
-
-        <div class="main-toolbar-row main-toolbar-row-date">
-          <div class="date-control">
-            <label for="date-input">Датум</label>
-            <div class="date-control-inputs">
-              <button id="date-prev" type="button" aria-label="Претходни дан">&lt;&lt;</button>
-              <input type="date" id="date-input" value="">
-              <button id="date-next" type="button" aria-label="Следећи дан">&gt;&gt;</button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </header>
+    </div>
 
     <div id="occupancy"></div>
   </main>

@@ -11,53 +11,6 @@ from datetime import datetime, timedelta, timezone
 from flask import g, has_app_context
 
 import config
-from group_metadata import infer_group_metadata
-
-
-def _ensure_group_metadata_schema(conn):
-    """Add and populate study metadata derived from existing group names."""
-    if not _table_exists(conn, "groups"):
-        return
-
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(groups)").fetchall()
-    }
-    for column, definition in (
-        ("study_program", "TEXT"),
-        ("module", "TEXT"),
-        ("accreditation", "INTEGER"),
-        ("study_year", "INTEGER"),
-    ):
-        if column not in columns:
-            conn.execute(f"ALTER TABLE groups ADD COLUMN {column} {definition}")
-
-    rows = conn.execute(
-        """
-        SELECT id, name
-        FROM groups
-        WHERE study_program IS NULL
-           OR module IS NULL
-           OR accreditation IS NULL
-           OR study_year IS NULL
-        """
-    ).fetchall()
-    for group_id, name in rows:
-        study_program, module, accreditation, study_year = infer_group_metadata(name)
-        conn.execute(
-            """
-            UPDATE groups
-            SET study_program = COALESCE(study_program, ?),
-                module = COALESCE(module, ?),
-                accreditation = COALESCE(accreditation, ?),
-                study_year = COALESCE(study_year, ?)
-            WHERE id = ?
-            """,
-            (study_program, module, accreditation, study_year, group_id),
-        )
-    conn.commit()
-
-
 def _app_module():
     """Return the loaded app module when available."""
     return sys.modules.get("app") or sys.modules.get("__main__")
@@ -864,7 +817,6 @@ def _ensure_reservation_overlap_schema(conn):
 
 def _ensure_extra_schemas(conn):
     """Create the add-on tables used by attendance and Android auth."""
-    _ensure_group_metadata_schema(conn)
     _ensure_semester_schema(conn)
     _ensure_calendar_revision_schema(conn)
     _ensure_subject_schema(conn)
@@ -953,11 +905,6 @@ def building_locations_for_room_building_name(building_name):
             (normalized,),
         )
     ]
-
-
-def building_locations_for_room_location(room_location):
-    """Backward-compatible wrapper for room building-name lookups."""
-    return building_locations_for_room_building_name(room_location)
 
 
 def building_locations_all():

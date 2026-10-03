@@ -8,11 +8,9 @@
     <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
 </head>
 <body>
-  <header class="my-reservations-page-header">
-    <h1>Моје резервације</h1>
-
-    <p><a href="{{ app_url_for('main.index') }}">Назад на распоред</a></p>
-  </header>
+  {% set page_title = 'Моје резервације' %}
+  {% set active_page = 'reservations' %}
+  {% include '_site_header.html' %}
 
   <main class="page-shell reservations-page-shell">
     <p id="page-message"></p>
@@ -34,6 +32,8 @@
       </section>
     </div>
   </main>
+
+  <script type="module" src="{{ app_url_for('static', filename='js/siteHeader.js') }}"></script>
 
   <script>
     window.APP_CONFIG = {

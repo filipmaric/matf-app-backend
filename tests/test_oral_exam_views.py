@@ -42,7 +42,8 @@ def test_oral_exam_selection_defaults_to_current_term_and_lists_teacher_courses(
     assert payload["selected_term"]["term_code"] == "2026.10"
     assert payload["terms"][0]["label"] == "2026.10"
     assert [session["course_id"] for session in payload["sessions"]] == [course_id]
-    assert payload["groups"] == []
+    assert payload["selected_session"]["course_id"] == course_id
+    assert [group["name"] for group in payload["groups"]] == ["1i1a", "1i1b"]
     assert payload["written_exams"] == []
 
 

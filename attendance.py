@@ -839,11 +839,6 @@ def attendance_allowed_locations_for_room_building_name(building_name):
     return building_locations_for_room_building_name(building_name)
 
 
-def attendance_allowed_locations_for_room_location(room_location):
-    """Backward-compatible wrapper for room building-name lookups."""
-    return attendance_allowed_locations_for_room_building_name(room_location)
-
-
 def attendance_allowed_locations_for_row(row):
     """Return the configured geofences for the room used by one attendance event."""
     return attendance_allowed_locations_for_room_building_name(row.get("room_building_name"))

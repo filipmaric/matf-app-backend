@@ -424,6 +424,8 @@ def selection_data():
         (session for session in sessions if session["id"] == requested_session_id),
         None,
     )
+    if requested_session_id is None and sessions:
+        selected_session = sessions[0]
     if requested_session_id is not None and selected_session is None:
         abort(404, "Термин наставе није пронађен.")
 

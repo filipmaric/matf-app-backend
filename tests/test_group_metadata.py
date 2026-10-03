@@ -1,8 +1,6 @@
 # Copyright (c) 2026 Filip Marić. See LICENCE.
 
 from group_metadata import infer_group_metadata
-from db import _ensure_group_metadata_schema
-import sqlite3
 
 
 def test_m_groups_use_module_and_default_accreditation():
@@ -37,23 +35,3 @@ def test_cyrillic_names_are_supported_and_special_groups_are_unknown():
     assert infer_group_metadata("2аф") == ("A", "F", 2022, 2)
     assert infer_group_metadata("semto") == (None, None, None, None)
     assert infer_group_metadata("bio") == (None, None, None, None)
-
-
-def test_group_schema_migration_adds_and_populates_columns():
-    connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
-    connection.executemany(
-        "INSERT INTO groups (name) VALUES (?)",
-        [("2i171a",), ("1o1",), ("semto",)],
-    )
-
-    _ensure_group_metadata_schema(connection)
-
-    rows = connection.execute(
-        "SELECT name, study_program, module, accreditation, study_year FROM groups ORDER BY id"
-    ).fetchall()
-    assert rows == [
-        ("2i171a", "I", None, 2017, 2),
-        ("1o1", "M", None, 2022, 1),
-        ("semto", None, None, None, None),
-    ]

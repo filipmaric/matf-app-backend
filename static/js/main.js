@@ -41,7 +41,7 @@ const AuthManager = {
                 this.isAdmin = await API.isAdmin(this.username);
                 this.elements.loginForm.style.display = "none";
                 this.elements.loginInfo.textContent = this.username;
-                this.elements.logoutForm.style.display = "inline-block";
+                this.elements.logoutForm.style.display = "flex";
                 this.elements.myReservationsWrap.style.display = "block";
                 this.elements.oralExamsWrap.style.display = "block";
             } else {

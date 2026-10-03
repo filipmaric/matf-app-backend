@@ -9,10 +9,9 @@
 </head>
 <body>
   <main class="page-shell teacher-page-shell oral-exams-shell">
-    <header class="attendance-page-header">
-      <h1>Усмени испити</h1>
-      <p><a href="{{ app_url_for('main.index') }}">Назад на распоред</a></p>
-    </header>
+    {% set page_title = 'Усмени испити' %}
+    {% set active_page = 'oral-exams' %}
+    {% include '_site_header.html' %}
 
     <section class="attendance-panel oral-exams-toolbar">
       <label for="oral-exam-term">Испитни рок:</label>
@@ -26,6 +25,8 @@
     <section id="oral-exams-calendar" class="attendance-panel" aria-live="polite" hidden></section>
     <p id="oral-exams-status" class="status" hidden></p>
   </main>
+
+  <script type="module" src="{{ app_url_for('static', filename='js/siteHeader.js') }}"></script>
 
   <script>
     window.APP_CONFIG = {
