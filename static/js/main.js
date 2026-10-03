@@ -4,6 +4,14 @@ import { CellRenderers, attachDragSensor } from './cellRenderers.js';
 import { createMouseIntervalSelector } from './calendarInteraction.js';
 import { formatDateDDMMYYYY } from './util.js';
 
+function formatLocalDate(date) {
+    return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, "0"),
+        String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Session data and login/logout UI elements
 ////////////////////////////////////////////////////////////////////////////////
@@ -276,6 +284,10 @@ const DragAndDropManager = {
             cellSelector: ".empty-slot",
             selectedClass: "selected",
             getGroupKey: (cell) => cell.dataset.room_id,
+            canStart: () => {
+                const date = document.getElementById("date-input")?.value || "";
+                return !this.isPastDate(date);
+            },
             onPreview: (selection) => this.updateDragTail(selection),
             onSelection: (selection) => this.handleSelection(selection),
         });
@@ -286,14 +298,30 @@ const DragAndDropManager = {
         // rerenders and does not need to be attached to individual cells.
     },
 
+    isPastDate(date) {
+        const today = new Date();
+        const todayValue = [
+            today.getFullYear(),
+            String(today.getMonth() + 1).padStart(2, "0"),
+            String(today.getDate()).padStart(2, "0"),
+        ].join("-");
+        return date < todayValue;
+    },
+
     updateDragTail(selection) {
         this.container.querySelectorAll(".empty-slot.drag-tail").forEach(el => {
             el.classList.remove("drag-tail");
         });
 
-        const bottomMost = selection.cells.reduce((best, slot) => {
-            return parseInt(slot.dataset.hour) > parseInt(best.dataset.hour) ? slot : best;
-        }, null);
+        const date = document.getElementById("date-input")?.value || "";
+        if (this.isPastDate(date)) return;
+
+        const cells = selection?.cells || [];
+        if (!cells.length) return;
+
+        const bottomMost = cells.reduce((best, slot) => {
+            return Number(slot.dataset.hour) > Number(best.dataset.hour) ? slot : best;
+        });
         if (bottomMost) bottomMost.classList.add("drag-tail");
     },
 
@@ -304,6 +332,12 @@ const DragAndDropManager = {
         });
 
         if (!selection.cells.length) return;
+
+        const date = document.getElementById("date-input")?.value || "";
+        if (this.isPastDate(date)) {
+            alert("Резервације није могуће правити за прошле датуме.");
+            return;
+        }
 
         const roomId = parseInt(selection.groupKey);
         const hours = selection.cells.map(slot => parseInt(slot.dataset.hour)).sort((a, b) => a - b);
@@ -356,7 +390,7 @@ const App = {
         if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             dateInput.value = date;
            console.log(date);
-        } if (!dateInput.value) dateInput.value = new Date().toISOString().split("T")[0];
+        } if (!dateInput.value) dateInput.value = formatLocalDate(new Date());
 
         // Load rooms
         const rooms = await API.getRooms();
@@ -430,9 +464,10 @@ const App = {
     // Move the date by the given number of days, positive or negative
     changeDate(days) {
         const input = document.getElementById("date-input");
-        const d = new Date(input.value);
+        const [year, month, day] = input.value.split("-").map(Number);
+        const d = new Date(year, month - 1, day);
         d.setDate(d.getDate() + days);
-        input.value = d.toISOString().split("T")[0];
+        input.value = formatLocalDate(d);
         this.refresh();
     }
 };

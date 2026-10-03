@@ -26,8 +26,15 @@ async function handleResponse(res, errorText) {
         } else {
             const textError = await res.text();
             console.error("Server HTML Error:", textError);
-            const err = new Error(`${errorText} - серверска грешка (${res.status})`);
+            let serverMessage = '';
+            if (typeof DOMParser !== 'undefined') {
+                const document = new DOMParser().parseFromString(textError, 'text/html');
+                serverMessage = document.querySelector('p')?.textContent?.trim() || '';
+            }
+            const message = serverMessage || `${errorText} - серверска грешка (${res.status})`;
+            const err = new Error(message);
             err.status = res.status;
+            err.data = { error: message };
             throw err;
         }
 }

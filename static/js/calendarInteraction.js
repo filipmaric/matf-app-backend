@@ -11,6 +11,7 @@ export function createMouseIntervalSelector({
     container,
     cellSelector,
     getGroupKey,
+    canStart = () => true,
     selectedClass = 'calendar-cell-selected',
     onPreview = () => {},
     onSelection = () => {},
@@ -65,6 +66,7 @@ export function createMouseIntervalSelector({
     function onMouseDown(event) {
         const cell = event.target.closest(cellSelector);
         if (!cell || !container.contains(cell) || event.button !== 0) return;
+        if (!canStart(cell)) return;
         event.preventDefault();
         selecting = true;
         startCell = cell;
