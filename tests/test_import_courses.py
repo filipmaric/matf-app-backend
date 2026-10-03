@@ -20,7 +20,7 @@ def write_courses_workbook(path):
     for sheet_name in SHEETS:
         workbook.create_sheet(sheet_name)
 
-    def block(code, name, module="М", accreditation="2022", year="1"):
+    def block(code, name, module="М", accreditation="2022", year="1", student_count="7"):
         return "\n".join(
             (
                 f"Шифра: {code}",
@@ -28,6 +28,7 @@ def write_courses_workbook(path):
                 f"Модул: {module}",
                 f"Акредитација: {accreditation}",
                 f"Година: {year}",
+                f"Студената: {student_count}",
             )
         )
 
@@ -342,12 +343,23 @@ def test_import_course_groups_populates_courses_table(tmp_path):
         ORDER BY course_code, subject_id
         """,
     )
+    count_rows = fetch_all(
+        db_path,
+        """
+        SELECT s.code, ssc.student_count
+        FROM subject_student_counts ssc
+        JOIN subjects s ON s.id = ssc.subject_id
+        ORDER BY s.code
+        """,
+    )
     csv_rows = read_csv_rows(csv_path)
     assert len(rows) == count_distinct_group_codes(workbook_path) + 1
     assert len(csv_rows) == count_distinct_group_codes(workbook_path)
     assert len(rows) == len({row["code"] for row in rows})
     assert len(subject_rows) == count_distinct_subjects(workbook_path)
     assert len(course_subject_rows) == count_distinct_memberships(workbook_path)
+    assert len(count_rows) == 4
+    assert all(row[1] == 7 for row in count_rows)
     assert f"DUPLICATE_PAIRS={count_duplicate_membership_pairs(workbook_path)}" in result.stderr
     assert f"DUPLICATE_OCCURRENCES={count_duplicate_memberships(workbook_path)}" in result.stderr
     assert "YEAR=2026" in result.stdout

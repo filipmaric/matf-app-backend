@@ -52,11 +52,11 @@ def test_export_exam_schedule_exports_one_row_per_course(tmp_path):
         )
         subject_a = conn.execute(
             "INSERT INTO subjects (code, name, accreditation, module) VALUES (?, ?, ?, ?)",
-            ("M1.01", "Linear Algebra", "IS", "I"),
+            ("M1.01", "Older Linear Algebra", 2015, "I"),
         ).lastrowid
         subject_b = conn.execute(
             "INSERT INTO subjects (code, name, accreditation, module) VALUES (?, ?, ?, ?)",
-            ("M1.01", "Linear Algebra", "IT", "I"),
+            ("M1.01", "Newer Linear Algebra", 2022, "I"),
         ).lastrowid
         subject_c = conn.execute(
             "INSERT INTO subjects (code, name, accreditation, module) VALUES (?, ?, ?, ?)",
@@ -101,6 +101,9 @@ def test_export_exam_schedule_exports_one_row_per_course(tmp_path):
     rows = _fetch_rows(output_path)
     assert len(rows) == 2
     assert [row["course_code"] for row in rows] == ["M1.01", "M2.02"]
-    assert [row["course_name"] for row in rows] == ["Linear Algebra", "Programming"]
+    assert [row["course_name"] for row in rows] == [
+        "Newer Linear Algebra / Older Linear Algebra",
+        "Programming",
+    ]
     assert [row["exam_date"] for row in rows] == ["2026-07-03", "2026-07-04"]
     assert [row["requires_computers"] for row in rows] == ["1", "0"]

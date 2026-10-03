@@ -75,6 +75,16 @@ def parse_subject_year(raw_year: str | None) -> int:
     return year
 
 
+def parse_student_count(raw_count: str | None) -> int | None:
+    """Parse an aggregate student count from a subject block or CSV row."""
+    normalized = normalize_text(raw_count)
+    if not normalized or normalized.startswith("???") or normalized == "-":
+        return None
+    if not normalized.isdigit():
+        raise ValueError(f"Invalid student count in subject block: {raw_count!r}")
+    return int(normalized)
+
+
 def parse_requires_computers(raw_value: str | None) -> int | None:
     normalized = normalize_text(raw_value)
     if not normalized:
@@ -112,6 +122,16 @@ class CourseGroupRecord:
     requires_computers: int | None
     subject_names: tuple[str, ...]
     source_locations: tuple[str, ...]
+    subject_counts: tuple["SubjectStudentCount", ...] = ()
+
+
+@dataclass(frozen=True)
+class SubjectStudentCount:
+    subject_code: str
+    module: str
+    accreditation: int
+    semester: int
+    student_count: int | None
 
 
 def make_course_bucket(semester: int) -> dict[str, object]:
@@ -122,6 +142,7 @@ def make_course_bucket(semester: int) -> dict[str, object]:
         "semester": semester,
         "course_name": None,
         "requires_computers": None,
+        "subject_counts": {},
     }
 
 
@@ -152,6 +173,7 @@ def finalize_course_records(
                 ),
                 subject_names=tuple(names),
                 source_locations=tuple(str(source) for source in bucket["sources"]),
+                subject_counts=tuple(bucket["subject_counts"].values()),
             )
         )
     return records
@@ -201,6 +223,30 @@ def register_course_item(
         seen.add(normalized_subject_name)
         names.append(normalized_subject_name)
         bucket["sources"].append(source_location)
+
+
+def register_subject_student_count(
+    grouped: "OrderedDict[str, dict[str, object]]",
+    *,
+    course_code: str,
+    subject_code: str,
+    module: str,
+    accreditation: int,
+    semester: int,
+    student_count: int | None,
+) -> None:
+    """Remember one aggregate count for a subject-semester pair."""
+    counts = grouped[course_code]["subject_counts"]
+    key = (subject_code, module, accreditation)
+    existing = counts.get(key)
+    if existing is None or existing.student_count is None:
+        counts[key] = SubjectStudentCount(
+            subject_code=subject_code,
+            module=module,
+            accreditation=accreditation,
+            semester=semester,
+            student_count=student_count,
+        )
 
 
 def register_subject_and_membership(
@@ -340,6 +386,7 @@ def build_course_groups_from_workbook(
                 module = pick_first(parsed, "Модул")
                 accreditation = pick_first(parsed, "Акредитација")
                 subject_year = pick_first(parsed, "Година")
+                student_count = parse_student_count(pick_first(parsed, "Студената"))
                 if subject_name is None:
                     continue
                 year = parse_subject_year(subject_year)
@@ -355,6 +402,15 @@ def build_course_groups_from_workbook(
                     semester=semester,
                     source_location=location,
                     subject_name=subject_name,
+                )
+                register_subject_student_count(
+                    grouped,
+                    course_code=group_code,
+                    subject_code=subject_code,
+                    module=module,
+                    accreditation=accreditation_year,
+                    semester=semester,
+                    student_count=student_count,
                 )
                 register_subject_and_membership(
                     subjects,
@@ -437,10 +493,20 @@ def build_course_groups_from_csv(
             module = normalize_text(row.get("subject_module"))
             accreditation = normalize_text(row.get("subject_accreditation"))
             subject_year = row.get("subject_year")
+            student_count = parse_student_count(row.get("student_count"))
             if not subject_code or not subject_name or not accreditation:
                 continue
             if not accreditation.isdigit():
                 continue
+            register_subject_student_count(
+                grouped,
+                course_code=course_code,
+                subject_code=subject_code,
+                module=module,
+                accreditation=int(accreditation),
+                semester=semester,
+                student_count=student_count,
+            )
             register_subject_and_membership(
                 subjects,
                 memberships,
@@ -636,6 +702,49 @@ def sync_course_subjects(
     return inserted
 
 
+def sync_subject_student_counts(
+    conn: sqlite3.Connection,
+    records: list[CourseGroupRecord],
+    subject_ids: dict[tuple[str, int, str], int],
+) -> int:
+    """Replace imported aggregate counts for the subjects in this workbook."""
+    count_rows = [count for record in records for count in record.subject_counts]
+    target_semesters = sorted({record.semester for record in records})
+    with conn:
+        cur = conn.cursor()
+        if target_semesters:
+            semester_placeholders = ",".join("?" for _ in target_semesters)
+            cur.execute(
+                f"""
+                DELETE FROM subject_student_counts
+                WHERE semester_id IN ({semester_placeholders})
+                """,
+                tuple(target_semesters),
+            )
+        values = {}
+        for count in count_rows:
+            subject_id = subject_ids.get(
+                (count.subject_code, count.accreditation, count.module)
+            )
+            if subject_id is None:
+                continue
+            key = (subject_id, count.semester)
+            if key not in values or values[key] is None:
+                values[key] = count.student_count
+        inserted = 0
+        for (subject_id, semester_id), student_count in values.items():
+            cur.execute(
+                """
+                INSERT INTO subject_student_counts
+                    (subject_id, semester_id, student_count)
+                VALUES (?, ?, ?)
+                """,
+                (subject_id, semester_id, student_count),
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
 def clear_missing_course_semesters(
     conn: sqlite3.Connection,
     records: list[CourseGroupRecord],
@@ -740,9 +849,22 @@ def ensure_required_tables(conn: sqlite3.Connection, schema_path: Path) -> None:
             ON courses(code);
         """
     )
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(courses)").fetchall()}
-    if "semester" not in columns:
-        conn.execute("ALTER TABLE courses ADD COLUMN semester INTEGER NOT NULL DEFAULT 2")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS subject_student_counts (
+            subject_id INTEGER NOT NULL,
+            semester_id INTEGER NOT NULL,
+            student_count INTEGER,
+            PRIMARY KEY (subject_id, semester_id),
+            CHECK (student_count IS NULL OR student_count >= 0),
+            FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+            FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_subject_student_counts_semester
+            ON subject_student_counts(semester_id, subject_id);
+        """
+    )
+    conn.commit()
 
 
 def main(argv=None) -> int:
@@ -828,6 +950,7 @@ def main(argv=None) -> int:
         subject_ids = upsert_subjects(conn, subjects)
         inserted, updated, unchanged = upsert_courses(conn, records)
         normalized_rows = sync_course_subjects(conn, records, memberships, subject_ids)
+        subject_student_count_rows = sync_subject_student_counts(conn, records, subject_ids)
         pruned_subjects = prune_unreferenced_subjects(conn)
     finally:
         conn.close()
@@ -846,6 +969,7 @@ def main(argv=None) -> int:
     print(f"UPDATED={updated}")
     print(f"UNCHANGED={unchanged}")
     print(f"COURSE_SUBJECTS_INSERTED={normalized_rows}")
+    print(f"SUBJECT_STUDENT_COUNTS_INSERTED={subject_student_count_rows}")
     return 0
 
 

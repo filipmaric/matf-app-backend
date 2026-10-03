@@ -53,6 +53,7 @@ Modules behind browser-facing pages and web JSON feeds:
 - `semester.py` for shared semester lookup helpers
 - `reservations.py` for reservation writes and cancellations
 - `reservations_views.py` for the My Reservations page
+- `oral_exam_views.py` for teacher-managed oral-exam scheduling and room assignment
 - `main.py` for the homepage blueprint
 
 ## Other

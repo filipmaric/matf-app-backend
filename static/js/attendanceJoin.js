@@ -251,7 +251,7 @@ function renderChallenge(root, data, state = {}) {
     const username = document.createElement('input');
     username.type = 'text';
     username.id = 'attendance-username';
-    username.placeholder = 'Корисничко име';
+    username.placeholder = 'Корисничко име (нпр. mr20123)';
     username.required = true;
     username.value = state.username || '';
     username.autocomplete = 'off';
@@ -343,6 +343,10 @@ function renderChallenge(root, data, state = {}) {
                     return;
                 }
                 if (err.status === 409) {
+                    if (err.data?.error_code === 'attendance_device_already_registered') {
+                        showDeviceAlreadyRegisteredState(root, err.data.error);
+                        return;
+                    }
                     frozenUntilBucket = currentChallengeBucket;
                     freezeMessageText = err.data?.error || 'Погрешан број. Сачекајте нови круг.';
                     const freezeNotice = root.querySelector('#attendance-freeze-notice');
@@ -431,6 +435,38 @@ function showBlockedState(root) {
     root.appendChild(panel);
 }
 
+function showDeviceAlreadyRegisteredState(root, messageText) {
+    blockedShown = true;
+    expiredShown = false;
+    outsideClassShown = false;
+    geofenceErrorShown = false;
+    frozenUntilBucket = null;
+    freezeMessageText = '';
+    clearFreezeCountdown();
+    if (pollHandle) {
+        clearInterval(pollHandle);
+        pollHandle = null;
+    }
+    root.innerHTML = '';
+
+    const panel = document.createElement('div');
+    panel.className = 'attendance-panel attendance-blocked-panel';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Пријава са овог уређаја није могућа';
+    panel.appendChild(title);
+
+    const note = document.createElement('p');
+    note.textContent = messageText || 'Овај уређај је већ искоришћен за пријаву на овом термину.';
+    panel.appendChild(note);
+
+    const instruction = document.createElement('p');
+    instruction.textContent = 'Искључите овај уређај и користите други уређај за пријаву.';
+    panel.appendChild(instruction);
+
+    root.appendChild(panel);
+}
+
 function showSessionExpiredState(root) {
     expiredShown = true;
     blockedShown = false;
@@ -478,6 +514,10 @@ function handleAttendanceError(root, err) {
     }
     if (errorCode === 'attendance_attempt_blocked') {
         showBlockedState(root);
+        return true;
+    }
+    if (errorCode === 'attendance_device_already_registered') {
+        showDeviceAlreadyRegisteredState(root, errorText);
         return true;
     }
     return false;

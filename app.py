@@ -72,6 +72,10 @@ Route overview:
   - group-oriented course-session explorer and data feed.
   - `/group_sessions`: renders the group sessions view.
   - `/group_sessions_data`: returns the group sessions data feed.
+  - `/oral_exams`: renders the teacher oral-exam selection page.
+  - `/oral_exams_data`: returns the current teacher's exam terms, courses, and groups.
+  - `/oral_exams_schedule`: creates, deletes, and assigns room reservations to
+    teacher-managed oral-exam terms.
   
   - QR attendance, challenge refresh, check-in submission, review demo, and geofence checks.
   - `/attendance/<kind>/<id>/<date>`: renders the attendance page.
@@ -122,6 +126,7 @@ from calendar_views import *  # noqa: F401,F403,E402 - re-export calendar helper
 
 import teacher_sessions_views as teacher_sessions_views_mod  # noqa: E402,F401 - teacher course-session explorer
 import group_sessions_views as group_sessions_views_mod  # noqa: E402,F401 - group course-session explorer
+import oral_exam_views as oral_exam_views_mod  # noqa: E402,F401 - oral-exam selection
 
 import reservations as reservations_mod  # noqa: E402,F401 - registers reservation routes on import
 import semester as semester_mod  # noqa: E402,F401 - shared semester helpers on import
@@ -142,6 +147,7 @@ app.register_blueprint(attendance_mod.bp)
 app.register_blueprint(calendar_views_mod.bp)
 app.register_blueprint(teacher_sessions_views_mod.bp)
 app.register_blueprint(group_sessions_views_mod.bp)
+app.register_blueprint(oral_exam_views_mod.bp)
 app.register_blueprint(reservations_mod.bp)
 app.register_blueprint(reservations_views_mod.bp)
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 Filip Marić. See LICENCE. */
-import { formatApiDate } from './util.js';
+import { createCalendarTopBar, createCancelButton } from './calendarActions.js';
+import { renderCalendarMenu } from './calendarExport.js';
 
 function formatLectureType(type) {
     const normalized = String(type || '').toLowerCase();
@@ -58,13 +59,7 @@ export function attachDragSensor(td, ctx, hour) {
 
 function renderCancelBtn(container, cellUsername, ctx, onAction) {
     if (cellUsername === ctx.user || ctx.isAdmin) {
-        const btn = document.createElement("button");
-        btn.className = "res-cancel-btn";
-        btn.textContent = "×";
-        btn.onclick = (e) => {
-            e.stopPropagation();
-            onAction();
-        };
+        const btn = createCancelButton(onAction);
         container.appendChild(btn);
         return btn;
     }
@@ -86,78 +81,6 @@ function renderAttendanceBtn(ownerUsername, ctx, onAction) {
     return btn;
 }
 
-function createTopBar() {
-    const topBar = document.createElement("div");
-    topBar.className = "res-top-bar";
-
-    const left = document.createElement("div");
-    left.className = "res-top-bar-left";
-
-    const right = document.createElement("div");
-    right.className = "res-top-bar-right";
-
-    topBar.append(left, right);
-    return { topBar, left, right };
-}
-
-// Helper for the calendar (within this file)
-function renderCalendarMenu(cellData, fullDate) {
-	// Prepare data
-	const startTime = formatApiDate(fullDate, cellData.start);
-	const endTime = formatApiDate(fullDate, cellData.end);
-	const title = cellData.description;
-	const description = `Корисник: ${cellData.username}, Сала: ${cellData.room}, Опис: ${cellData.description}`;
-
-	// Create the main wrapper (dropdown)
-	const dropdown = document.createElement('div');
-	dropdown.className = 'calendar-dropdown';
-
-	// Create the button
-	const btn = document.createElement('button');
-	btn.className = 'cal-btn';
-	btn.innerHTML = '📅';
-
-	// Create the menu
-	const menu = document.createElement('div');
-	menu.className = 'cal-menu';
-
-	// Google Calendar link
-	const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startTime}/${endTime}&details=${encodeURIComponent(description)}&location=${encodeURIComponent('MatF, сала ' + cellData.room)}`;
-	const googleLink = document.createElement('a');
-	googleLink.href = googleUrl;
-	googleLink.target = '_blank';
-	googleLink.innerText = 'Google Calendar';
-
-	// ICS download link
-	const icsContent = [
-            "BEGIN:VCALENDAR",
-            "VERSION:2.0",
-            "BEGIN:VEVENT",
-            `DTSTART:${startTime}`,
-            `DTEND:${endTime}`,
-            `SUMMARY:${title}`,
-            `DESCRIPTION:${description}`,
-            `LOCATION:Сала ${cellData.room}`,
-            "END:VEVENT",
-            "END:VCALENDAR"
-	].join("\n");
-
-	const icsBlob = new Blob([icsContent], { type: 'text/calendar' });
-	const icsUrl = URL.createObjectURL(icsBlob);
-	const icsLink = document.createElement('a');
-	icsLink.href = icsUrl;
-	icsLink.download = `rezervacija_${cellData.id}.ics`;
-	icsLink.innerText = 'Outlook / Apple (.ics)';
-
-	// Assemble the elements
-	menu.appendChild(googleLink);
-	menu.appendChild(icsLink);
-	dropdown.appendChild(btn);
-	dropdown.appendChild(menu);
-
-	return dropdown;
-}
-
 // Object that contains functions for creating the content of different cell types
 export const CellRenderers = {
     // reservation cells
@@ -171,7 +94,7 @@ export const CellRenderers = {
         const card = document.createElement("div");
         card.className = "res-card";
 
-        const { topBar, left, right } = createTopBar();
+        const { topBar, left, right } = createCalendarTopBar();
 
         // cancel button (if the user has permissions and the reservation is still cancelable)
         if (cellData.can_cancel !== false) {
@@ -219,7 +142,7 @@ export const CellRenderers = {
 	    td.classList.add("my");
 
         // The top bar contains controls - cancel button, calendar
-        const { topBar, left, right } = createTopBar();
+        const { topBar, left, right } = createCalendarTopBar();
 
         // cancel/restore class button
         const btn = renderCancelBtn(left, cellData.teacher_username, ctx, () => 

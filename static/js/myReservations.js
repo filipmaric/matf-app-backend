@@ -108,7 +108,39 @@ function renderEmptyMessage(container, message) {
     container.appendChild(p);
 }
 
-function createAttendanceListItem(student) {
+function createAttendanceDeleteButton(student, context) {
+    if (!context || !student.attendance_record_id) {
+        return null;
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'attendance-delete-btn';
+    button.textContent = '×';
+    button.title = 'Обриши пријаву студента';
+    button.setAttribute('aria-label', `Обриши пријаву студента ${student.student_label || 'Непознато'}`);
+    button.addEventListener('click', async () => {
+        if (!window.confirm(`Обрисати пријаву студента ${student.student_label || 'Непознато'}?`)) {
+            return;
+        }
+        button.disabled = true;
+        try {
+            await API.deleteAttendanceRecord(
+                context.kind,
+                context.eventId,
+                context.eventDate,
+                student.attendance_record_id,
+            );
+            await context.onDeleted(student);
+        } catch (error) {
+            window.alert(error.data?.error || 'Грешка при брисању пријаве студента.');
+            button.disabled = false;
+        }
+    });
+    return button;
+}
+
+function createAttendanceListItem(student, context = null) {
     const li = document.createElement('li');
     const label = document.createElement('span');
     label.textContent = student.student_label || 'Непознато';
@@ -119,7 +151,58 @@ function createAttendanceListItem(student) {
     source.className = `attendance-source-badge attendance-source-${normalizedSource}`;
     source.textContent = normalizedSource;
     li.appendChild(source);
+
+    const deleteButton = createAttendanceDeleteButton(student, context);
+    if (deleteButton) {
+        li.appendChild(deleteButton);
+    }
     return li;
+}
+
+function createAttendanceAddStudentForm(context, onAdded) {
+    const form = document.createElement('form');
+    form.className = 'attendance-add-student-form';
+
+    const label = document.createElement('label');
+    label.textContent = 'Накнадно додај студента';
+    form.appendChild(label);
+
+    const controls = document.createElement('div');
+    controls.className = 'attendance-add-student-controls';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.name = 'username';
+    input.placeholder = 'Корисничко име (нпр. mr20123)';
+    input.autocomplete = 'off';
+    input.required = true;
+
+    const button = document.createElement('button');
+    button.type = 'submit';
+    button.textContent = 'Додај';
+    controls.append(input, button);
+    form.appendChild(controls);
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        button.disabled = true;
+        try {
+            const result = await API.addAttendanceStudent(
+                context.kind,
+                context.eventId,
+                context.eventDate,
+                input.value.trim(),
+            );
+            input.value = '';
+            await onAdded(result.student);
+        } catch (error) {
+            window.alert(error.data?.error || 'Грешка при додавању студента.');
+        } finally {
+            button.disabled = false;
+        }
+    });
+
+    return form;
 }
 
 function ensureAttendanceDialog() {
@@ -445,18 +528,48 @@ async function renderPersonalAttendanceByTerm(reservations) {
                     reservation.date,
                 );
                 clearNode(content);
-                if (!data.students.length) {
-                    content.textContent = 'Нема регистрованих студената.';
-                    return;
-                }
+                let students = data.students || [];
+                const renderStudents = () => {
+                    clearNode(content);
+                    content.appendChild(createAttendanceAddStudentForm(
+                        {
+                            kind: 'reservation',
+                            eventId: reservation.id,
+                            eventDate: reservation.date,
+                        },
+                        async (student) => {
+                            students = [...students, student];
+                            count.textContent = `(${students.length} присутних)`;
+                            renderStudents();
+                        },
+                    ));
+                    if (!students.length) {
+                        const empty = document.createElement('p');
+                        empty.textContent = 'Нема регистрованих студената.';
+                        content.appendChild(empty);
+                        return;
+                    }
 
-                const students = document.createElement('ul');
-                students.className = 'attendance-summary-list';
-                data.students.forEach((student) => {
-                    students.appendChild(createAttendanceListItem(student));
-                });
-                content.appendChild(students);
-                content.appendChild(createAttendanceDownloadButton(reservation.date, data.students));
+                    const studentsList = document.createElement('ul');
+                    studentsList.className = 'attendance-summary-list';
+                    students.forEach((student) => {
+                        studentsList.appendChild(createAttendanceListItem(student, {
+                            kind: 'reservation',
+                            eventId: reservation.id,
+                            eventDate: reservation.date,
+                            onDeleted: async (deletedStudent) => {
+                                students = students.filter(
+                                    (item) => item.attendance_record_id !== deletedStudent.attendance_record_id,
+                                );
+                                count.textContent = `(${students.length} присутних)`;
+                                renderStudents();
+                            },
+                        }));
+                    });
+                    content.appendChild(studentsList);
+                    content.appendChild(createAttendanceDownloadButton(reservation.date, students));
+                };
+                renderStudents();
             } catch (error) {
                 loaded = false;
                 content.textContent = error.data?.error || 'Грешка при учитавању присуства.';
@@ -495,19 +608,44 @@ function createLazyAttendanceTerm(kind, eventId, date, roomId, startSlot, studen
         content.textContent = 'Учитавање присуства...';
         try {
             const data = await API.getAttendanceRoster(kind, eventId, date);
-            clearNode(content);
-            if (!data.students.length) {
-                content.textContent = 'Нема регистрованих студената.';
-                return;
-            }
+            let students = data.students || [];
+            const renderStudents = () => {
+                clearNode(content);
+                content.appendChild(createAttendanceAddStudentForm(
+                    { kind, eventId, eventDate: date },
+                    async (student) => {
+                        students = [...students, student];
+                        count.textContent = `(${students.length} присутних)`;
+                        renderStudents();
+                    },
+                ));
+                if (!students.length) {
+                    const empty = document.createElement('p');
+                    empty.textContent = 'Нема регистрованих студената.';
+                    content.appendChild(empty);
+                    return;
+                }
 
-            const students = document.createElement('ul');
-            students.className = 'attendance-summary-list';
-            data.students.forEach((student) => {
-                students.appendChild(createAttendanceListItem(student));
-            });
-            content.appendChild(students);
-            content.appendChild(createAttendanceDownloadButton(date, data.students));
+                const studentsList = document.createElement('ul');
+                studentsList.className = 'attendance-summary-list';
+                students.forEach((student) => {
+                    studentsList.appendChild(createAttendanceListItem(student, {
+                        kind,
+                        eventId,
+                        eventDate: date,
+                        onDeleted: async (deletedStudent) => {
+                            students = students.filter(
+                                (item) => item.attendance_record_id !== deletedStudent.attendance_record_id,
+                            );
+                            count.textContent = `(${students.length} присутних)`;
+                            renderStudents();
+                        },
+                    }));
+                });
+                content.appendChild(studentsList);
+                content.appendChild(createAttendanceDownloadButton(date, students));
+            };
+            renderStudents();
         } catch (error) {
             loaded = false;
                 content.textContent = error.data?.error || 'Грешка при учитавању присуства.';

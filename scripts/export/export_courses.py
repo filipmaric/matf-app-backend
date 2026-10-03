@@ -38,7 +38,8 @@ def fetch_course_rows(cur: sqlite3.Cursor, academic_year: str) -> list[sqlite3.R
             s.name AS subject_name,
             s.accreditation AS subject_accreditation,
             s.module AS subject_module,
-            s.year AS subject_year
+            s.year AS subject_year,
+            ssc.student_count AS student_count
         FROM courses c
         JOIN semesters s_course
           ON s_course.id = c.semester
@@ -46,6 +47,9 @@ def fetch_course_rows(cur: sqlite3.Cursor, academic_year: str) -> list[sqlite3.R
           ON cs.course_code = c.code
         LEFT JOIN subjects s
           ON s.id = cs.subject_id
+        LEFT JOIN subject_student_counts ssc
+          ON ssc.subject_id = s.id
+         AND ssc.semester_id = s_course.id
         WHERE s_course.id IN (?, ?)
         ORDER BY s_course.id, c.code, s.accreditation, s.module, s.code, s.id
         """,
@@ -91,6 +95,7 @@ def export_courses(
                     "subject_accreditation",
                     "subject_module",
                     "subject_year",
+                    "student_count",
                 ]
             )
             for row in rows:
@@ -105,6 +110,7 @@ def export_courses(
                         row["subject_accreditation"] if row["subject_accreditation"] is not None else "",
                         row["subject_module"] or "",
                         row["subject_year"] if row["subject_year"] is not None else "",
+                        row["student_count"] if row["student_count"] is not None else "",
                     ]
                 )
     finally:

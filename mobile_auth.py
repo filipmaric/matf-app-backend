@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from urllib.error import HTTPError
 from urllib.error import URLError
@@ -58,6 +58,7 @@ from db import (
     student_enrollment_revision,
     student_identity_for_username,
     student_exam_schedule_for_student,
+    student_oral_exam_schedule_for_student,
     student_notifications_unread_count,
     student_timetable_events_for_student,
     timetable_revision_for_semester,
@@ -82,6 +83,30 @@ def _timetable_response(payload, etag):
 def _timetable_etag(semester_id, timetable_revision, enrollment_revision):
     """Build an ETag from independent timetable and enrollment revisions."""
     return f'"semester-{semester_id}-timetable-{timetable_revision}-enrollments-{enrollment_revision}"'
+
+
+def _default_exam_term_code(terms):
+    """Choose the active exam term, or the first upcoming term."""
+    if not terms:
+        return None
+
+    today = date.today().isoformat()
+    active = [term for term in terms if term["start_date"] <= today <= term["end_date"]]
+    if active:
+        return active[0]["term_code"]
+
+    upcoming = [term for term in terms if term["start_date"] > today]
+    if upcoming:
+        return min(
+            upcoming,
+            key=lambda term: (term["start_date"], term["end_date"], term["term_code"]),
+        )["term_code"]
+
+    # If the school year has already ended, keep the most recent term selected.
+    return max(
+        terms,
+        key=lambda term: (term["end_date"], term["start_date"], term["term_code"]),
+    )["term_code"]
 
 
 class HypatiaExamApplicationError(RuntimeError):
@@ -912,12 +937,21 @@ def exam_schedule():
     available_term_codes = {row["term_code"] for row in available_terms}
     if requested_term_code is not None and requested_term_code not in available_term_codes:
         return jsonify({"error": "exam_term_not_found"}), 404
-    resolved_term_code = requested_term_code or (available_terms[0]["term_code"] if available_terms else None)
+    resolved_term_code = requested_term_code or _default_exam_term_code(available_terms)
 
     exams_source = (
         student_exam_schedule_for_student(data_username, mode=requested_mode)
         if resolved_term_code is None
         else student_exam_schedule_for_student(data_username, resolved_term_code, requested_mode)
+    )
+    oral_exams_source = (
+        student_oral_exam_schedule_for_student(data_username, mode=requested_mode)
+        if resolved_term_code is None
+        else student_oral_exam_schedule_for_student(
+            data_username,
+            resolved_term_code,
+            requested_mode,
+        )
     )
 
     def _clean_optional_location(value):
@@ -942,11 +976,25 @@ def exam_schedule():
         }
         for row in exams_source
     ]
+    oral_exams = [
+        {
+            "id": row["oral_exam_id"],
+            "term_code": row["term_code"],
+            "course_code": row["course_code"],
+            "course_name": row["course_name"],
+            "exam_date": row["exam_date"],
+            "start_hour": row["start_hour"],
+            "end_hour": row["end_hour"],
+            "location": _clean_optional_location(row["location"]),
+        }
+        for row in oral_exams_source
+    ]
     return jsonify(
         {
             "student": student,
             "semester": semester,
             "exams": exams,
+            "oral_exams": oral_exams,
             "available_terms": available_terms,
             "selected_term_code": resolved_term_code,
             "generated_at": _utcnow().isoformat(),

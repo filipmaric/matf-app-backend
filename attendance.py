@@ -1158,6 +1158,47 @@ def attendance_make_attempt_response(response, kind, event_id, event_date):
     return response
 
 
+ATTENDANCE_GUEST_DEVICE_COOKIE = "attendance_guest_device"
+
+
+def attendance_guest_device_token():
+    """Return a verified anonymous device token from the browser cookie."""
+    value = request.cookies.get(ATTENDANCE_GUEST_DEVICE_COOKIE, "")
+    if "." not in value:
+        return None
+    nonce, signature = value.rsplit(".", 1)
+    if not nonce or not hmac.compare_digest(
+        attendance_attempt_sign(f"guest-device:{nonce}"), signature
+    ):
+        return None
+    return nonce
+
+
+def attendance_guest_device_cookie_value():
+    """Create a signed anonymous browser/device token."""
+    nonce = secrets.token_urlsafe(32)
+    signature = attendance_attempt_sign(f"guest-device:{nonce}")
+    return f"{nonce}.{signature}"
+
+
+def attendance_guest_device_hash(token):
+    """Hash a device token before storing it in the database."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def attendance_make_guest_device_response(response):
+    """Set the anonymous device cookie if this browser does not have one."""
+    if attendance_guest_device_token() is None:
+        response.set_cookie(
+            ATTENDANCE_GUEST_DEVICE_COOKIE,
+            attendance_guest_device_cookie_value(),
+            max_age=60 * 60 * 24 * 365,
+            httponly=True,
+            samesite="Lax",
+        )
+    return response
+
+
 # Route handlers.
 #
 # These endpoints serve the teacher attendance page, the student join flow,
@@ -1188,12 +1229,13 @@ def attendance_join_view(kind, event_id, event_date):
         abort(404)
     if not attendance_has_attempt(kind, event_id, event_date):
         abort(403)
-    return render_template(
+    response = make_response(render_template(
         'attendance_join.html',
         attendance_kind=kind,
         attendance_event_id=event_id,
         attendance_event_date=event_date,
-    )
+    ))
+    return attendance_make_guest_device_response(response)
 
 
 
@@ -1556,6 +1598,60 @@ def attendance_student_delete(kind, event_id, event_date, record_id):
     return jsonify({'success': True})
 
 
+@bp.route('/attendance/<kind>/<int:event_id>/<event_date>/student', methods=['POST'])
+def attendance_student_add(kind, event_id, event_date):
+    """Allow the responsible teacher to add a known student manually."""
+    if not attendance_kind_valid(kind):
+        abort(404)
+
+    row = attendance_event_row(kind, event_id, event_date)
+    if not row:
+        return jsonify({'error': 'Термин није пронађен.'}), 404
+    if not attendance_can_view(kind, row):
+        return jsonify({'error': 'Приступ није дозвољен.'}), 403
+    if kind == 'weekly' and bool(row.get('is_canceled')):
+        return jsonify({'error': 'Овај час је отказан.'}), 409
+    payload = attendance_json_object()
+    if payload is None:
+        return jsonify({'error': 'Тело захтева мора бити JSON објекат.'}), 400
+    username = payload.get('username')
+    if not isinstance(username, str) or not username.strip():
+        return jsonify({'error': 'Унесите корисничко име студента.'}), 400
+    username = username.strip()
+    if not attendance_student_exists(username):
+        return jsonify({'error': 'Студент са наведеним корисничким именом не постоји.'}), 404
+
+    existing = query_db(
+        """
+        SELECT 1 FROM attendance_records
+        WHERE event_kind = ? AND event_id = ? AND event_date = ? AND username = ?
+        """,
+        (kind, event_id, event_date, username),
+        one=True,
+    )
+    if existing:
+        return jsonify({'error': 'Студент је већ на списку пријављених.'}), 409
+
+    attendance_record_student(
+        kind,
+        event_id,
+        event_date,
+        username,
+        registration_source='web',
+        client_ip=request.remote_addr,
+        geofence_checked=False,
+    )
+    student = next(
+        (student for student in attendance_records_for_event(kind, event_id, event_date)
+         if student['username'] == username),
+        None,
+    )
+    if student is None:
+        # A concurrent check-in may have won the INSERT OR IGNORE race.
+        return jsonify({'error': 'Студент је већ на списку пријављених.'}), 409
+    return jsonify({'success': True, 'student': student}), 201
+
+
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>/spot_check', methods=['POST'])
 def attendance_spot_check_submit(kind, event_id, event_date):
     """Store the shortlist entries that the teacher did not confirm."""
@@ -1683,6 +1779,31 @@ def attendance_join_submit(kind, event_id, event_date):
             'error': 'Корисничко име не постоји.',
         }), 404
 
+    guest_device_token = attendance_guest_device_token() if guest_registration_enabled else None
+    new_guest_device_cookie = None
+    if guest_registration_enabled and guest_device_token is None:
+        new_guest_device_cookie = attendance_guest_device_cookie_value()
+        guest_device_token = new_guest_device_cookie.rsplit('.', 1)[0]
+    guest_device_hash = (
+        attendance_guest_device_hash(guest_device_token)
+        if guest_registration_enabled and guest_device_token
+        else None
+    )
+    if guest_device_hash:
+        device_registration = query_db(
+            """
+            SELECT username FROM attendance_guest_devices
+            WHERE device_token_hash = ? AND event_kind = ? AND event_id = ? AND event_date = ?
+            """,
+            (guest_device_hash, kind, event_id, event_date),
+            one=True,
+        )
+        if device_registration and device_registration['username'] != username:
+            return jsonify({
+                'error_code': 'attendance_device_already_registered',
+                'error': 'Овај уређај је већ искоришћен за пријаву на овом термину.',
+            }), 409
+
     if isinstance(selected_code, bool):
         selected_code = None
     try:
@@ -1699,6 +1820,29 @@ def attendance_join_submit(kind, event_id, event_date):
     if password is not None and not student_radius_auth(username, password):
         return jsonify({'error': 'Корисничко име или лозинка нису исправни.'}), 401
 
+    if guest_device_hash:
+        execute_db(
+            """
+            INSERT OR IGNORE INTO attendance_guest_devices
+                (device_token_hash, event_kind, event_id, event_date, username)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (guest_device_hash, kind, event_id, event_date, username),
+        )
+        device_registration = query_db(
+            """
+            SELECT username FROM attendance_guest_devices
+            WHERE device_token_hash = ? AND event_kind = ? AND event_id = ? AND event_date = ?
+            """,
+            (guest_device_hash, kind, event_id, event_date),
+            one=True,
+        )
+        if device_registration['username'] != username:
+            return jsonify({
+                'error_code': 'attendance_device_already_registered',
+                'error': 'Овај уређај је већ искоришћен за пријаву на овом термину.',
+            }), 409
+
     failure_state = attendance_attempt_failure_state_raw(attempt_token) or {}
     attendance_attempt_clear_failures(attempt_token)
     if kind != "review":
@@ -1713,4 +1857,13 @@ def attendance_join_submit(kind, event_id, event_date):
             geofence_checked=geofence_checked,
             failed_attempts_before_success=int(failure_state.get("failed_attempts") or 0),
         )
-    return jsonify({'success': True, 'username': username})
+    response = jsonify({'success': True, 'username': username})
+    if new_guest_device_cookie is not None:
+        response.set_cookie(
+            ATTENDANCE_GUEST_DEVICE_COOKIE,
+            new_guest_device_cookie,
+            max_age=60 * 60 * 24 * 365,
+            httponly=True,
+            samesite="Lax",
+        )
+    return response

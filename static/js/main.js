@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
 import { CellRenderers, attachDragSensor } from './cellRenderers.js';
+import { createMouseIntervalSelector } from './calendarInteraction.js';
 import { formatDateDDMMYYYY } from './util.js';
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -42,6 +43,7 @@ const AuthManager = {
                 this.elements.loginInfo.textContent = this.username;
                 this.elements.logoutForm.style.display = "inline-block";
                 this.elements.myReservationsWrap.style.display = "block";
+                this.elements.oralExamsWrap.style.display = "block";
             } else {
                 this.reset();
             }
@@ -58,6 +60,7 @@ const AuthManager = {
         this.elements.logoutForm.style.display = "none";
         this.elements.loginInfo.textContent = "";
         this.elements.myReservationsWrap.style.display = "none";
+        this.elements.oralExamsWrap.style.display = "none";
     },
 
     async login(username, password, onSuccess) {
@@ -261,74 +264,49 @@ const TableManager = {
 // Actions for reserving a room with the mouse
 ////////////////////////////////////////////////////////////////////////////////
 const DragAndDropManager = {
-    isDragging: false,
-    dragStart: null,
-    dragRoom: null,
     container: null,
     rooms: {},
+    selector: null,
 
     init(container, rooms) {
         this.container = container;
         this.rooms = rooms;
-        this.setupHandlers();
+        this.selector = createMouseIntervalSelector({
+            container,
+            cellSelector: ".empty-slot",
+            selectedClass: "selected",
+            getGroupKey: (cell) => cell.dataset.room_id,
+            onPreview: (selection) => this.updateDragTail(selection),
+            onSelection: (selection) => this.handleSelection(selection),
+        });
     },
 
     setupHandlers() {
-        const slots = this.container.querySelectorAll(".empty-slot");
-        slots.forEach(slot => {
-            slot.onmousedown = (e) => {
-                this.isDragging = true;
-                this.dragStart = slot;
-                this.dragRoom = slot.dataset.room_id;
-                slot.classList.add("selected");
-                this.updateDragTail();
-            };
-            slot.onmouseenter = () => {
-                if (this.isDragging && slot.dataset.room_id === this.dragRoom) {
-                    slot.classList.add("selected");
-                    this.updateDragTail();
-                }
-            };
-            slot.onmouseup = () => this.handleMouseUp();
-        });
+        // The shared selector uses delegated handlers, so it survives table
+        // rerenders and does not need to be attached to individual cells.
     },
 
-    updateDragTail() {
+    updateDragTail(selection) {
         this.container.querySelectorAll(".empty-slot.drag-tail").forEach(el => {
             el.classList.remove("drag-tail");
         });
 
-        const selected = Array.from(this.container.querySelectorAll(".empty-slot.selected"));
-        if (!selected.length) {
-            return;
-        }
-
-        const roomId = selected[0].dataset.room_id;
-        const sameRoom = selected.filter(slot => slot.dataset.room_id === roomId);
-        if (!sameRoom.length) {
-            return;
-        }
-
-        const bottomMost = sameRoom.reduce((best, slot) => {
+        const bottomMost = selection.cells.reduce((best, slot) => {
             return parseInt(slot.dataset.hour) > parseInt(best.dataset.hour) ? slot : best;
-        });
-        bottomMost.classList.add("drag-tail");
+        }, null);
+        if (bottomMost) bottomMost.classList.add("drag-tail");
     },
 
-    async handleMouseUp() {
-        if (!this.isDragging) return;
-        this.isDragging = false;
-
-        const selected = Array.from(this.container.querySelectorAll(".empty-slot.selected"));
-        selected.forEach(el => el.classList.remove("selected"));
+    async handleSelection(selection) {
+        selection.cells.forEach((cell) => cell.classList.remove("selected"));
         this.container.querySelectorAll(".empty-slot.drag-tail").forEach(el => {
             el.classList.remove("drag-tail");
         });
 
-        if (!selected.length) return;
+        if (!selection.cells.length) return;
 
-        const roomId = parseInt(selected[0].dataset.room_id);
-        const hours = selected.map(s => parseInt(s.dataset.hour)).sort((a,b) => a-b);
+        const roomId = parseInt(selection.groupKey);
+        const hours = selection.cells.map(slot => parseInt(slot.dataset.hour)).sort((a, b) => a - b);
         const start = hours[0];
         const end = hours[hours.length - 1] + 1;
 
@@ -364,7 +342,8 @@ const App = {
             passwordInput: document.getElementById("password"),
             loginInfo: document.getElementById("login-info"),
             logoutForm: document.getElementById("logout-form"),
-            myReservationsWrap: document.getElementById("my-reservations-wrap")
+            myReservationsWrap: document.getElementById("my-reservations-wrap"),
+            oralExamsWrap: document.getElementById("oral-exams-wrap")
         });
 
 	// Show the appropriate login/logout elements

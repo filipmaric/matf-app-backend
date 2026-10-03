@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Filip Marić. See LICENCE.
 import app as myapp
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 import hashlib
 import hmac
 
@@ -881,6 +881,26 @@ def test_mobile_exam_schedule_returns_personalized_exams(client, db):
     _add_exam_term(db, semester, "2026.07", "2026-08-10", "2026-08-10")
     _add_exam_application(db, "2026.06", subject, "student1")
     _add_exam_application(db, "2026.07", subject, "student1")
+    teacher_id = db.teacher("Oral Teacher", "oral.teacher")
+    oral_session = db.execute(
+        """
+        INSERT INTO course_sessions (course_id, teacher_id, semester_id, type)
+        VALUES (?, ?, ?, ?)
+        """,
+        (course, teacher_id, semester, "v"),
+    )
+    db.execute(
+        "INSERT INTO session_groups (session_id, group_id) VALUES (?, ?)",
+        (oral_session, group_1o1),
+    )
+    db.execute(
+        """
+        INSERT INTO oral_exam_schedule
+            (term_code, course_session_id, exam_date, start_hour, end_hour, teacher_username)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("2026.07", oral_session, "2026-08-12", 13, 15, "oral.teacher"),
+    )
 
     token = _mobile_login(client, username="student1", device_id="device-exam").get_json()["token"]
     response = client.get("/mobile/exam_schedule", headers={"Authorization": f"Bearer {token}"})
@@ -895,6 +915,38 @@ def test_mobile_exam_schedule_returns_personalized_exams(client, db):
     assert [item["course_code"] for item in payload["exams"]] == ["M1.01"]
     assert [item["exam_date"] for item in payload["exams"]] == ["2026-08-10"]
     assert [item["subject_name"] for item in payload["exams"]] == ["Linear Algebra"]
+    assert payload["oral_exams"] == [
+        {
+            "id": payload["oral_exams"][0]["id"],
+            "term_code": "2026.07",
+            "course_code": "M1.01",
+            "course_name": "Linear Algebra",
+            "exam_date": "2026-08-12",
+            "start_hour": 13,
+            "end_hour": 15,
+            "location": None,
+        }
+    ]
+
+    db.execute(
+        "DELETE FROM exam_applications WHERE term_code = ? AND student_username = ?",
+        ("2026.07", "student1"),
+    )
+    response = client.get(
+        "/mobile/exam_schedule",
+        headers={"Authorization": f"Bearer {token}"},
+        query_string={"term_code": "2026.07", "mode": "applied"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["oral_exams"] == []
+
+    response = client.get(
+        "/mobile/exam_schedule",
+        headers={"Authorization": f"Bearer {token}"},
+        query_string={"term_code": "2026.07", "mode": "all_subjects"},
+    )
+    assert response.status_code == 200
+    assert len(response.get_json()["oral_exams"]) == 1
 
     response = client.get(
         "/mobile/exam_schedule",
@@ -905,6 +957,70 @@ def test_mobile_exam_schedule_returns_personalized_exams(client, db):
     payload = response.get_json()
     assert payload["selected_term_code"] == "2026.06"
     assert [item["exam_date"] for item in payload["exams"]] == ["2026-07-03"]
+
+
+def test_mobile_exam_schedule_defaults_to_active_then_upcoming_term(client, db):
+    today = date.today()
+    semester = db.semester(
+        name="текућа школска година",
+        start=today.replace(month=1, day=1).isoformat(),
+        end=today.replace(month=12, day=31).isoformat(),
+    )
+    db.student("student1", "125/1997", "Maric", "Filip")
+    subject = db.subject("M1.01", "Linear Algebra", "A", "I")
+    group = db.execute("INSERT INTO groups (name) VALUES (?)", ("1o1",))
+    _add_enrollment(db, "student1", semester, subject, group)
+
+    _add_exam_term(
+        db,
+        semester,
+        "past",
+        (today - timedelta(days=30)).isoformat(),
+        (today - timedelta(days=20)).isoformat(),
+    )
+    _add_exam_term(
+        db,
+        semester,
+        "active",
+        (today - timedelta(days=1)).isoformat(),
+        (today + timedelta(days=1)).isoformat(),
+    )
+    _add_exam_term(
+        db,
+        semester,
+        "upcoming",
+        (today + timedelta(days=10)).isoformat(),
+        (today + timedelta(days=20)).isoformat(),
+    )
+
+    token = _mobile_login(
+        client,
+        username="student1",
+        device_id="device-exam-default",
+    ).get_json()["token"]
+    response = client.get(
+        "/mobile/exam_schedule",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["selected_term_code"] == "active"
+
+    db.execute(
+        "UPDATE exam_terms SET start_date = ?, end_date = ? WHERE term_code = ?",
+        (
+            (today - timedelta(days=10)).isoformat(),
+            (today - timedelta(days=5)).isoformat(),
+            "active",
+        ),
+    )
+    response = client.get(
+        "/mobile/exam_schedule",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["selected_term_code"] == "upcoming"
 
 
 def test_mobile_exam_schedule_supports_all_subjects_mode(client, db):

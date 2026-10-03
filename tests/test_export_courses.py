@@ -64,6 +64,14 @@ def test_export_courses_exports_school_year_with_subjects(tmp_path):
                 ("M2.02", subject_a),
             ],
         )
+        conn.execute(
+            """
+            INSERT INTO subject_student_counts
+                (subject_id, semester_id, student_count)
+            VALUES (?, ?, ?)
+            """,
+            (subject_a, 3, 42),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -76,4 +84,5 @@ def test_export_courses_exports_school_year_with_subjects(tmp_path):
     assert [row["subject_code"] for row in rows] == ["M1.01", "M1.01", "M2.02"]
     assert [row["course_semester"] for row in rows] == ["јесењи", "пролећни", "пролећни"]
     assert [row["requires_computers"] for row in rows] == ["1", "0", "0"]
+    assert [row["student_count"] for row in rows] == ["42", "", ""]
     assert "M9.99" not in {row["course_code"] for row in rows}

@@ -815,7 +815,7 @@ def test_expired_attendance_attempt_clears_failure_rows(client, db, monkeypatch)
 
 def test_reserve_success_and_conflicts(client, db, monkeypatch):
     room = db.room("R1")
-    future_date = "2026-07-09"
+    future_date = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
     freeze_now(monkeypatch)
 
     login(client, "alice")
@@ -847,7 +847,11 @@ def test_reserve_success_and_conflicts(client, db, monkeypatch):
 
     teacher = db.teacher("Prof", "prof")
     course = db.course("NumericalMethods")
-    semester = db.semester(name="2025/26. пролећни", start="2026-03-23", end="2026-09-30")
+    semester = db.semester(
+        name="2025/26. пролећни",
+        start=datetime.date.today().isoformat(),
+        end=future_date,
+    )
     session = db.course_session(course, teacher, semester)
     db.weekly_session(
         session_id=session,
@@ -977,7 +981,20 @@ def test_reserve_validation_errors(client, db):
         "/reserve",
         json={
             "room_id": 1,
-            "date": "2026-03-09",
+            "date": "2026-01-01",
+            "start_slot": 8,
+            "end_slot": 10,
+            "description": "past date",
+        },
+    )
+    assert r.status_code == 400
+    assert "Резервације није могуће правити за прошле датуме." in r.get_data(as_text=True)
+
+    r = client.post(
+        "/reserve",
+        json={
+            "room_id": 1,
+            "date": (datetime.date.today() + datetime.timedelta(days=7)).isoformat(),
             "start_slot": 10,
             "end_slot": 10,
             "description": "bad slots",
@@ -1002,12 +1019,13 @@ def test_admin_can_set_username_on_reserve(client, db):
     db.room("R1")
     db.execute("INSERT INTO administrators (username) VALUES (?)", ("admin",))
     login(client, "admin")
+    future_date = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
 
     r = client.post(
         "/reserve",
         json={
             "room_id": 1,
-            "date": "2026-03-09",
+            "date": future_date,
             "start_slot": 8,
             "end_slot": 10,
             "description": "admin owned",
@@ -1016,7 +1034,7 @@ def test_admin_can_set_username_on_reserve(client, db):
     )
     assert r.status_code == 201
 
-    occupancy = client.get("/occupancy?date=2026-03-09").get_json()
+    occupancy = client.get(f"/occupancy?date={future_date}").get_json()
     assert occupancy["rooms"]["1"][0]["username"] == "other.user"
 
 
@@ -1066,6 +1084,7 @@ def test_bulk_reservations_atomic(client, db):
     room2 = db.room("A2")
 
     login(client, "alice")
+    future_date = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
 
     r = client.post(
         "/reserve/bulk",
@@ -1073,7 +1092,7 @@ def test_bulk_reservations_atomic(client, db):
             "reservations": [
                 {
                     "room_id": room1,
-                    "date": "2026-03-09",
+                    "date": future_date,
                     "start_slot": 8,
                     "end_slot": 10,
                     "description": "first",
@@ -1081,7 +1100,7 @@ def test_bulk_reservations_atomic(client, db):
                 },
                 {
                     "room_id": room2,
-                    "date": "2026-03-09",
+                    "date": future_date,
                     "start_slot": 9,
                     "end_slot": 11,
                     "description": "second",
@@ -1099,7 +1118,7 @@ def test_bulk_reservations_atomic(client, db):
             "reservations": [
                 {
                     "room_id": room1,
-                    "date": "2026-03-09",
+                    "date": future_date,
                     "start_slot": 8,
                     "end_slot": 10,
                     "description": "dup",
@@ -1107,7 +1126,7 @@ def test_bulk_reservations_atomic(client, db):
                 },
                 {
                     "room_id": room2,
-                    "date": "2026-03-09",
+                    "date": future_date,
                     "start_slot": 8,
                     "end_slot": 10,
                     "description": "should rollback",
@@ -1119,7 +1138,7 @@ def test_bulk_reservations_atomic(client, db):
     assert r.status_code == 409
     assert r.get_json() == {"error": "Групна резервација није успела."}
 
-    r = client.get("/occupancy?date=2026-03-09")
+    r = client.get(f"/occupancy?date={future_date}")
     rooms = r.get_json()["rooms"]
     assert len(rooms[str(room1)]) == 1
     assert len(rooms[str(room2)]) == 1
@@ -1190,12 +1209,13 @@ def test_reservation_rate_limit(client, db, monkeypatch):
     room = db.room("R1")
     login(client, "alice")
     monkeypatch.setitem(myapp.RATE_LIMITS, "reservation", (1, 60))
+    future_date = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
 
     r = client.post(
         "/reserve",
         json={
             "room_id": room,
-            "date": "2026-03-14",
+            "date": future_date,
             "start_slot": 8,
             "end_slot": 10,
             "description": "first",
@@ -1207,7 +1227,7 @@ def test_reservation_rate_limit(client, db, monkeypatch):
         "/reserve",
         json={
             "room_id": room,
-            "date": "2026-03-14",
+            "date": future_date,
             "start_slot": 10,
             "end_slot": 12,
             "description": "second",
@@ -1233,8 +1253,22 @@ def test_weekly_session_cancel_and_conflict(client, db, monkeypatch):
 
     login(client, "prof")
     freeze_now(monkeypatch)
-    future_date = "2026-06-22"
+    future_date = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
     monkeypatch.setattr(reservationsmod, "check_day", lambda date: ("teaching", 0, 1))
+
+    # A regular class occupies the room until the teacher cancels that
+    # occurrence, so a reservation in the same interval must be rejected.
+    r = client.post(
+        "/reserve",
+        json={
+            "room_id": room,
+            "date": future_date,
+            "start_slot": 2,
+            "end_slot": 4,
+            "description": "occupy slot",
+        },
+    )
+    assert r.status_code == 409
 
     r = client.post(
         "/weekly_session_cancel",
@@ -1255,6 +1289,8 @@ def test_weekly_session_cancel_and_conflict(client, db, monkeypatch):
     )
     assert r.status_code == 201
 
+    # The cancellation cannot be reverted while the room is occupied by the
+    # reservation that was enabled by that cancellation.
     r = client.post(
         "/weekly_session_cancel",
         json={"weekly_session_id": weekly_id, "date": future_date},

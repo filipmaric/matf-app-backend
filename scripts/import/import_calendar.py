@@ -18,7 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from calendar_common import validate_day_kind
-from db import ensure_calendar_revision_schema, ensure_calendar_schema
+from db import ensure_calendar_revision_schema
 
 
 DAY_NAMES = {
@@ -117,7 +117,6 @@ def import_calendar(database_path: Path, workbook_path: Path, schema_path: Path,
                 if not schema_path.exists():
                     raise FileNotFoundError(f"schema file not found: {schema_path}")
                 conn.executescript(schema_path.read_text(encoding="utf-8"))
-            ensure_calendar_schema(conn)
             ensure_calendar_revision_schema(conn)
             start_date, end_date = rows[0][0], rows[-1][0]
             conn.execute("DELETE FROM days WHERE date BETWEEN ? AND ?", (start_date, end_date))

@@ -172,6 +172,15 @@ export const API = {
         });
         return handleResponse(res, "Грешка при брисању пријаве студента");
     },
+    async addAttendanceStudent(kind, eventId, eventDate, username) {
+        const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/student`), {
+            method: "POST",
+            headers: withCsrfHeaders({ "Content-Type": "application/json" }),
+            credentials: "same-origin",
+            body: JSON.stringify({ username }),
+        });
+        return handleResponse(res, "Грешка при додавању студента");
+    },
     async submitAttendance(kind, eventId, eventDate, body) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/join`), {
             method: "POST",

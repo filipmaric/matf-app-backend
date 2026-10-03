@@ -12,6 +12,7 @@ from scripts.load.attendance_stress_test import (
     Account,
     build_parser,
     cleanup_attendance,
+    join_token_for_time,
     load_accounts,
     load_usernames,
     percentile_report,
@@ -53,6 +54,16 @@ def test_percentile_report_is_deterministic():
         "p99": 50,
         "max": 50,
     }
+
+
+def test_join_token_for_time_changes_with_qr_bucket():
+    first = join_token_for_time("secret", "weekly", 10, "2026-01-01", 100.0, ttl=8)
+    same_bucket = join_token_for_time("secret", "weekly", 10, "2026-01-01", 103.9, ttl=8)
+    next_bucket = join_token_for_time("secret", "weekly", 10, "2026-01-01", 108.0, ttl=8)
+
+    assert first == same_bucket
+    assert first != next_bucket
+    assert len(first) == 48
 
 
 def test_cleanup_only_removes_selected_event_and_accounts(tmp_path):
@@ -114,9 +125,10 @@ def test_remote_run_requires_explicit_production_flag(tmp_path):
 
 def test_run_flow_reproduces_login_challenge_and_submit(monkeypatch):
     class Response:
-        def __init__(self, status_code, payload):
+        def __init__(self, status_code, payload, text=""):
             self.status_code = status_code
             self._payload = payload
+            self.text = text
             self.ok = 200 <= status_code < 400
 
         def json(self):
@@ -179,3 +191,71 @@ def test_run_flow_reproduces_login_challenge_and_submit(monkeypatch):
         "latitude": 44.82,
         "longitude": 20.45,
     }
+
+
+def test_run_flow_reproduces_username_only_guest_registration(monkeypatch):
+    class Response:
+        def __init__(self, status_code, payload, text=""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+            self.ok = 200 <= status_code < 400
+
+        def json(self):
+            return self._payload
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url, kwargs))
+            if url.endswith("/join/qr-token"):
+                return Response(200, {}, '<meta name="csrf-token" content="csrf-token">')
+            return Response(
+                200,
+                {
+                    "challenge": {"current_code": 1234},
+                    "attendance_attempt_token": "ignored-for-guest-flow",
+                },
+            )
+
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url, kwargs))
+            return Response(200, {"success": True})
+
+        def close(self):
+            pass
+
+    session = Session()
+    monkeypatch.setattr(
+        "scripts.load.attendance_stress_test.requests.Session",
+        lambda: session,
+    )
+    args = SimpleNamespace(
+        base_url="https://mia.matf.bg.ac.rs/matf-app",
+        timeout=1,
+        latitude=None,
+        longitude=None,
+        registration_mode="guest",
+    )
+
+    result = run_flow(
+        Account("guest.student", "", "guest-device-1"),
+        args,
+        event_id=10,
+        event_date="2026-01-01",
+        join_token="qr-token",
+        scheduled_at=time.monotonic(),
+        stop_event=threading.Event(),
+    )
+
+    assert result.status == "success"
+    assert [call[0] for call in session.calls] == ["GET", "GET", "POST"]
+    assert session.calls[0][1].endswith("/join/qr-token")
+    assert session.calls[1][2]["params"] == {}
+    assert session.calls[2][2]["json"] == {
+        "username": "guest.student",
+        "selected_code": 1234,
+    }
+    assert session.calls[2][2]["headers"] == {"X-CSRFToken": "csrf-token"}

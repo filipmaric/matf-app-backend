@@ -104,6 +104,13 @@ def _group_rows(rows: list[dict[str, str]], term_code: str) -> list[dict[str, ob
         course_code = _normalize_text(row.get("course_code"))
         if not course_code:
             continue
+        # The source export also contains courses without a scheduled exam.
+        # Keep those rows out of the schedule instead of trying to parse their
+        # empty date and hour fields.
+        if not _normalize_text(row.get("exam_date")) or not _normalize_text(
+            row.get("exam_hour")
+        ):
+            continue
         if course_code not in grouped:
             grouped[course_code] = []
             order.append(course_code)
@@ -159,6 +166,26 @@ def _load_existing_rows(cur: sqlite3.Cursor, term_code: str) -> dict[str, sqlite
     for row in rows:
         existing[_normalize_text(row[2])] = row
     return existing
+
+
+def _canonical_course_name(cur: sqlite3.Cursor, course_code: str, fallback: str) -> str:
+    """Return all subject names linked to a grouped course in accreditation order."""
+    rows = cur.execute(
+        """
+        SELECT DISTINCT s.name, s.accreditation, s.id
+        FROM course_subjects cs
+        JOIN subjects s ON s.id = cs.subject_id
+        WHERE cs.course_code = ?
+        ORDER BY s.accreditation DESC, s.name ASC, s.id ASC
+        """,
+        (course_code,),
+    ).fetchall()
+    names = []
+    for row in rows:
+        name = _normalize_text(row[0])
+        if name and name not in names:
+            names.append(name)
+    return " / ".join(names) if names else fallback
 
 
 def _row_changed(existing: sqlite3.Row, record: dict[str, object]) -> bool:
@@ -336,6 +363,11 @@ def import_rows(database_path: Path, csv_path: Path, term_code: str) -> int:
         cur = conn.cursor()
 
         for record in records:
+            record["course_name"] = _canonical_course_name(
+                cur,
+                record["course_code"],
+                record["course_name"],
+            )
             record["location"] = mydb.resolve_exam_location_to_building(
                 cur,
                 record["location"],

@@ -11,7 +11,12 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import hashlib
+import hmac
+import html
 import json
+import os
+import re
 import sqlite3
 import threading
 import time
@@ -54,8 +59,8 @@ class FlowResult:
         return round((self.finished_at - self.started_at) * 1000, 1)
 
 
-def load_accounts(path: Path) -> list[Account]:
-    """Read accounts without ever printing their passwords."""
+def load_accounts(path: Path, require_password: bool = True) -> list[Account]:
+    """Read load identities without ever printing their passwords."""
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         required = {"username", "password", "device_id"}
@@ -71,7 +76,7 @@ def load_accounts(path: Path) -> list[Account]:
                 device_id=(row.get("device_id") or "").strip(),
                 device_name=(row.get("device_name") or "Attendance stress-test device").strip(),
             )
-            if not account.username or not account.password or not account.device_id:
+            if not account.username or not account.device_id or (require_password and not account.password):
                 raise ValueError(f"accounts CSV row {row_number} has an empty required value")
             if account.username in seen:
                 raise ValueError(f"duplicate username in accounts CSV: {account.username}")
@@ -112,8 +117,32 @@ def response_error(response: requests.Response, phase: str) -> str:
     return f"{phase}: HTTP {response.status_code}"
 
 
+def csrf_token_from_html(document: str) -> str | None:
+    """Extract the browser CSRF token rendered on the guest join page."""
+    match = re.search(
+        r'<meta\s+name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']',
+        document or "",
+        re.IGNORECASE,
+    )
+    return html.unescape(match.group(1)) if match else None
+
+
 def endpoint(base_url: str, path: str) -> str:
     return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+
+
+def join_token_for_time(
+    secret: str,
+    event_kind: str,
+    event_id: int,
+    event_date: str,
+    timestamp: float,
+    ttl: int = 8,
+) -> str:
+    """Derive the QR token for a time bucket without exposing the secret."""
+    bucket = int(timestamp // ttl)
+    payload = f"{event_kind}:{event_id}:{event_date}:{bucket}:join".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()[:48]
 
 
 def run_flow(
@@ -124,6 +153,7 @@ def run_flow(
     join_token: str,
     scheduled_at: float,
     stop_event: threading.Event,
+    event_kind: str = "weekly",
 ) -> FlowResult:
     result = FlowResult(username=account.username, scheduled_at=scheduled_at)
     delay = scheduled_at - time.monotonic()
@@ -137,35 +167,66 @@ def run_flow(
     session = requests.Session()
     base = args.base_url
     try:
-        phase_started = time.monotonic()
-        login = session.post(
-            endpoint(base, "/mobile/login"),
-            json={
-                "username": account.username,
-                "password": account.password,
-                "device_id": account.device_id,
-                "device_name": account.device_name,
-            },
-            timeout=args.timeout,
-        )
-        result.login_ms = round((time.monotonic() - phase_started) * 1000, 1)
-        result.login_status = login.status_code
-        if not login.ok:
-            result.status = "login_failed"
-            result.error = response_error(login, "login")
-            return result
-        token = response_payload(login).get("token")
-        if not token:
-            result.status = "login_failed"
-            result.error = "login: response did not contain token"
-            return result
+        effective_join_token = join_token
+        if getattr(args, "rotate_join_token", False):
+            effective_join_token = join_token_for_time(
+                args.attendance_secret,
+                event_kind,
+                event_id,
+                event_date,
+                time.time() + getattr(args, "clock_offset_seconds", 0.0),
+                args.join_token_ttl,
+            )
+        headers = {}
+        if getattr(args, "registration_mode", "authenticated") == "guest":
+            phase_started = time.monotonic()
+            bootstrap = session.get(
+                endpoint(base, f"/attendance/{event_kind}/{event_id}/{event_date}/join/{effective_join_token}"),
+                allow_redirects=True,
+                timeout=args.timeout,
+            )
+            result.login_ms = round((time.monotonic() - phase_started) * 1000, 1)
+            result.login_status = bootstrap.status_code
+            if not bootstrap.ok:
+                result.status = "guest_bootstrap_failed"
+                result.error = response_error(bootstrap, "guest bootstrap")
+                return result
+            csrf_token = csrf_token_from_html(bootstrap.text)
+            if not csrf_token:
+                result.status = "guest_bootstrap_failed"
+                result.error = "guest bootstrap: response did not contain CSRF token"
+                return result
+            headers["X-CSRFToken"] = csrf_token
+        else:
+            phase_started = time.monotonic()
+            login = session.post(
+                endpoint(base, "/mobile/login"),
+                json={
+                    "username": account.username,
+                    "password": account.password,
+                    "device_id": account.device_id,
+                    "device_name": account.device_name,
+                },
+                timeout=args.timeout,
+            )
+            result.login_ms = round((time.monotonic() - phase_started) * 1000, 1)
+            result.login_status = login.status_code
+            if not login.ok:
+                result.status = "login_failed"
+                result.error = response_error(login, "login")
+                return result
+            token = response_payload(login).get("token")
+            if not token:
+                result.status = "login_failed"
+                result.error = "login: response did not contain token"
+                return result
+            headers = {"Authorization": f"Bearer {token}"}
 
-        headers = {"Authorization": f"Bearer {token}"}
-        target = f"/attendance/weekly/{event_id}/{event_date}/challenge"
+        target = f"/attendance/{event_kind}/{event_id}/{event_date}/challenge"
         phase_started = time.monotonic()
         challenge = session.get(
             endpoint(base, target),
-            params={"join_token": join_token},
+            params={} if getattr(args, "registration_mode", "authenticated") == "guest" else {"join_token": effective_join_token},
             headers=headers,
             timeout=args.timeout,
         )
@@ -185,15 +246,18 @@ def run_flow(
             return result
 
         body: dict[str, Any] = {
-            "attendance_attempt_token": attempt_token,
             "selected_code": selected_code,
         }
+        if getattr(args, "registration_mode", "authenticated") == "guest":
+            body["username"] = account.username
+        else:
+            body["attendance_attempt_token"] = attempt_token
         if args.latitude is not None and args.longitude is not None:
             body["latitude"] = args.latitude
             body["longitude"] = args.longitude
         phase_started = time.monotonic()
         submit = session.post(
-            endpoint(base, f"/attendance/weekly/{event_id}/{event_date}/join"),
+            endpoint(base, f"/attendance/{event_kind}/{event_id}/{event_date}/join"),
             json=body,
             headers=headers,
             timeout=args.timeout,
@@ -235,6 +299,7 @@ def run_stress_test(args: argparse.Namespace, accounts: list[Account]) -> dict[s
                 args.join_token,
                 scheduled_at,
                 stop_event,
+                args.event_kind,
             )
             futures[future] = account.username
 
@@ -262,7 +327,7 @@ def run_stress_test(args: argparse.Namespace, accounts: list[Account]) -> dict[s
         "requested_clients": args.clients,
         "scheduled_clients": len(selected),
         "duration_seconds": args.duration,
-        "event": {"kind": "weekly", "event_id": args.event_id, "event_date": args.event_date},
+        "event": {"kind": args.event_kind, "event_id": args.event_id, "event_date": args.event_date},
         "status_counts": status_counts,
         "latency_ms": percentile_report(durations),
         "phase_latency_ms": {
@@ -307,6 +372,20 @@ def cleanup_attendance(database: Path, event_id: int, event_date: str, usernames
             """,
             (event_id, event_date, *usernames),
         )
+        guest_devices_table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'attendance_guest_devices'"
+        ).fetchone()
+        if guest_devices_table:
+            connection.execute(
+                f"""
+                DELETE FROM attendance_guest_devices
+                WHERE event_kind = 'weekly'
+                  AND event_id = ?
+                  AND event_date = ?
+                  AND username IN ({placeholders})
+                """,
+                (event_id, event_date, *usernames),
+            )
         return cursor.rowcount
 
 
@@ -315,6 +394,9 @@ def write_cleanup_sql(path: Path, event_id: int, event_date: str, usernames: lis
     path.write_text(
         "BEGIN;\n"
         "DELETE FROM attendance_records\n"
+        f"WHERE event_kind = 'weekly' AND event_id = {event_id}\n"
+        f"  AND event_date = '{event_date}' AND username IN ({quoted});\n"
+        "DELETE FROM attendance_guest_devices\n"
         f"WHERE event_kind = 'weekly' AND event_id = {event_id}\n"
         f"  AND event_date = '{event_date}' AND username IN ({quoted});\n"
         "COMMIT;\n",
@@ -328,11 +410,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--confirm-cleanup", action="store_true", help="required with --cleanup")
     parser.add_argument("--database", type=Path, help="SQLite database used with --cleanup")
     parser.add_argument("--base-url", help="server base URL, including the application root")
-    parser.add_argument("--accounts-file", type=Path, help="private CSV with test accounts")
+    parser.add_argument("--accounts-file", type=Path, help="private CSV with test identities")
     parser.add_argument("--usernames-file", type=Path, help="one username per line, for cleanup only")
     parser.add_argument("--event-id", type=int, required=True, help="weekly session ID from the test event")
+    parser.add_argument(
+        "--event-kind",
+        choices=("weekly", "reservation"),
+        default="weekly",
+        help="attendance event kind",
+    )
     parser.add_argument("--event-date", required=True, help="attendance date in YYYY-MM-DD format")
     parser.add_argument("--join-token", help="join_token from the QR code")
+    parser.add_argument(
+        "--rotate-join-token",
+        action="store_true",
+        help="derive the current QR token for each client from ATTENDANCE_SECRET",
+    )
+    parser.add_argument(
+        "--join-token-ttl",
+        type=int,
+        default=8,
+        help="QR token bucket length in seconds when --rotate-join-token is used",
+    )
+    parser.add_argument(
+        "--clock-offset-seconds",
+        type=float,
+        default=0.0,
+        help="add this offset to the load generator clock when deriving QR tokens",
+    )
+    parser.add_argument(
+        "--registration-mode",
+        choices=("authenticated", "guest"),
+        default="authenticated",
+        help="attendance flow to simulate (guest is username-only registration)",
+    )
     parser.add_argument("--clients", type=int, default=300)
     parser.add_argument("--duration", type=float, default=60.0, help="seconds over which flows are started")
     parser.add_argument("--max-workers", type=int, default=100)
@@ -371,8 +482,14 @@ def validate_args(args: argparse.Namespace, accounts: list[Account], usernames: 
         raise ValueError("latitude and longitude must be supplied together")
     if not args.base_url:
         raise ValueError("--base-url is required for a load run")
-    if not args.join_token:
+    if not args.join_token and not args.rotate_join_token:
         raise ValueError("--join-token is required for a load run")
+    if args.rotate_join_token:
+        args.attendance_secret = os.getenv("ATTENDANCE_SECRET", "")
+        if not args.attendance_secret:
+            raise ValueError("--rotate-join-token requires ATTENDANCE_SECRET")
+        if args.join_token_ttl < 1:
+            raise ValueError("--join-token-ttl must be positive")
     host = urlparse(args.base_url).hostname or ""
     if host not in {"localhost", "127.0.0.1", "::1"} and not (args.allow_remote or args.allow_production):
         raise ValueError("remote load runs require --allow-remote")
@@ -384,7 +501,14 @@ def validate_args(args: argparse.Namespace, accounts: list[Account], usernames: 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    accounts = load_accounts(args.accounts_file) if args.accounts_file else []
+    accounts = (
+        load_accounts(
+            args.accounts_file,
+            require_password=args.registration_mode != "guest",
+        )
+        if args.accounts_file
+        else []
+    )
     usernames = load_usernames(args.usernames_file) if args.usernames_file else []
     validate_args(args, accounts, usernames)
 

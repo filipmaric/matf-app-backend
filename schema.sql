@@ -2,7 +2,11 @@
 CREATE TABLE groups (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    description TEXT
+    description TEXT,
+    study_program TEXT,
+    module TEXT,
+    accreditation INTEGER,
+    study_year INTEGER
 );
 
 CREATE TABLE days (
@@ -119,6 +123,19 @@ CREATE INDEX idx_course_subjects_course
 CREATE INDEX idx_course_subjects_subject
     ON course_subjects(subject_id);
 
+CREATE TABLE subject_student_counts (
+    subject_id INTEGER NOT NULL,
+    semester_id INTEGER NOT NULL,
+    student_count INTEGER,
+    PRIMARY KEY (subject_id, semester_id),
+    CHECK (student_count IS NULL OR student_count >= 0),
+    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_subject_student_counts_semester
+    ON subject_student_counts(semester_id, subject_id);
+
 CREATE TABLE course_sessions (
     id INTEGER PRIMARY KEY,
     course_id INTEGER NOT NULL,
@@ -213,6 +230,19 @@ CREATE TABLE attendance_guest_registration_settings (
     PRIMARY KEY(event_kind, event_id, event_date)
 );
 
+CREATE TABLE attendance_guest_devices (
+    device_token_hash TEXT NOT NULL,
+    event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+    event_id INTEGER NOT NULL,
+    event_date TEXT NOT NULL,
+    username TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY(device_token_hash, event_kind, event_id, event_date)
+);
+
+CREATE INDEX idx_attendance_guest_devices_event
+    ON attendance_guest_devices(event_kind, event_id, event_date);
+
 CREATE TABLE attendance_session_settings (
     event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
     event_id INTEGER NOT NULL,
@@ -296,6 +326,26 @@ CREATE INDEX idx_exam_terms_semester_end_date
     ON exam_terms(semester_id, end_date DESC, term_code DESC);
 CREATE INDEX idx_exam_terms_end_date
     ON exam_terms(end_date DESC, term_code DESC);
+
+CREATE TABLE oral_exam_schedule (
+    id INTEGER PRIMARY KEY,
+    term_code TEXT NOT NULL,
+    course_session_id INTEGER NOT NULL,
+    exam_date TEXT NOT NULL,
+    start_hour INTEGER NOT NULL,
+    end_hour INTEGER NOT NULL,
+    reservation_id INTEGER,
+    teacher_username TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (start_hour >= 0 AND end_hour <= 24 AND end_hour > start_hour),
+    FOREIGN KEY(term_code) REFERENCES exam_terms(term_code) ON DELETE CASCADE,
+    FOREIGN KEY(course_session_id) REFERENCES course_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY(reservation_id) REFERENCES reservations(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_oral_exam_schedule_term_date_hour
+    ON oral_exam_schedule(term_code, exam_date, start_hour);
+CREATE INDEX idx_oral_exam_schedule_group
+    ON oral_exam_schedule(course_session_id, term_code);
 
 CREATE TABLE exam_applications (
     id INTEGER PRIMARY KEY,

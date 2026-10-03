@@ -14,6 +14,25 @@ from pathlib import Path
 DEFAULT_TERM_CODE = "2026.07"
 
 
+def _canonical_course_name(cur: sqlite3.Cursor, course_code: str, fallback: str) -> str:
+    rows = cur.execute(
+        """
+        SELECT DISTINCT s.name, s.accreditation, s.id
+        FROM course_subjects cs
+        JOIN subjects s ON s.id = cs.subject_id
+        WHERE cs.course_code = ?
+        ORDER BY s.accreditation DESC, s.name ASC, s.id ASC
+        """,
+        (course_code,),
+    ).fetchall()
+    names = []
+    for row in rows:
+        name = " ".join(str(row[0] or "").split())
+        if name and name not in names:
+            names.append(name)
+    return " / ".join(names) if names else fallback
+
+
 def _fetch_course_rows(cur: sqlite3.Cursor, term_code: str) -> list[sqlite3.Row]:
     return cur.execute(
         """
@@ -72,7 +91,11 @@ def export_exam_schedule(
                 writer.writerow(
                     [
                         course_row["course_code"],
-                        course_row["course_name"],
+                        _canonical_course_name(
+                            cur,
+                            course_row["course_code"],
+                            course_row["course_name"],
+                        ),
                         course_row["exam_date"],
                         course_row["exam_hour"],
                         course_row["requires_computers"] if course_row["requires_computers"] is not None else 0,

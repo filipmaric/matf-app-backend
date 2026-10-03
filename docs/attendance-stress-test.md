@@ -11,6 +11,15 @@ The complete flow for each account is:
 2. `GET /attendance/weekly/<event_id>/<date>/challenge?join_token=...`
 3. `POST /attendance/weekly/<event_id>/<date>/join`
 
+Use `--event-kind reservation` when the attendance session belongs to a
+personal reservation; the default is `weekly`.
+
+For username-only mode, pass `--registration-mode guest`. The script then
+skips `/mobile/login`; each client opens the QR join URL, loads the challenge
+using its anonymous attempt cookie, and submits only its username and the
+current challenge code. The password column may be empty in this mode, but
+usernames and device IDs must still be unique.
+
 The script reads a private CSV with these columns:
 
 ```csv
@@ -21,6 +30,13 @@ load.student.001,secret-1,load-device-001,Load test device 001
 Do not commit this file. It contains credentials and should be stored outside
 the repository with restrictive permissions.
 
+Example username-only CSV:
+
+```csv
+username,password,device_id,device_name
+load.student.001,,load-device-001,Guest load device 001
+```
+
 ## Dry run
 
 Validate the input and schedule 300 clients without contacting a server:
@@ -30,6 +46,7 @@ python scripts/load/attendance_stress_test.py \
   --base-url http://127.0.0.1:5000 \
   --accounts-file /secure/load-accounts.csv \
   --event-id 108 \
+  --event-kind reservation \
   --event-date 2026-05-15 \
   --join-token test-token \
   --clients 300 \
@@ -122,6 +139,16 @@ its own bearer session and device ID. The QR join token and event must be valid
 at the time of the test; the challenge response supplies the current code and
 the attendance attempt token used by the final POST.
 
+Because QR tokens rotate every eight seconds, a one-minute test should use
+`--rotate-join-token`. Set `ATTENDANCE_SECRET` securely in the load generator's
+environment; the script derives the token for each simulated scan and never
+includes the secret in its report. The load generator clock must be
+synchronized with the server clock.
+
+If exact clock synchronization is temporarily unavailable, measure the server
+offset and pass it explicitly. For example, if the server is 41.1 seconds
+ahead of the load generator, use `--clock-offset-seconds 41.1`.
+
 ```bash
 python scripts/load/attendance_stress_test.py \
   --base-url https://staging.example.edu/matf-app \
@@ -144,6 +171,25 @@ Remote runs require `--allow-remote`, and production runs additionally require
 separate so that a staging test does not accidentally look like a production
 authorization, and a typo cannot silently generate traffic against a remote
 server.
+
+Username-only production run:
+
+```bash
+python scripts/load/attendance_stress_test.py \
+  --base-url https://mia.matf.bg.ac.rs/matf-app \
+  --accounts-file /secure/guest-load-accounts.csv \
+  --event-id 108 \
+  --event-date 2026-05-15 \
+  --registration-mode guest \
+  --rotate-join-token \
+  --clock-offset-seconds 41.1 \
+  --environment production \
+  --allow-production \
+  --clients 300 \
+  --duration 60 \
+  --report attendance-guest-stress.json \
+  --cleanup-sql attendance-guest-cleanup.sql
+```
 
 The script stops starting new flows when the observed error rate exceeds 10%
 after at least 20 completed flows. It does not retry the login or attendance
@@ -172,9 +218,9 @@ python scripts/load/attendance_stress_test.py \
   --event-date 2026-05-15
 ```
 
-Cleanup removes only `weekly` attendance rows for the selected event, date,
-and usernames. It does not remove student accounts, mobile sessions, or the
-test event itself.
+Cleanup removes only `weekly` attendance rows and anonymous guest-device rows
+for the selected event, date, and usernames. It does not remove student
+accounts, mobile sessions, or the test event itself.
 
 ## Metrics and server observation
 

@@ -1,0 +1,37 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>Усмени испити</title>
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
+</head>
+<body>
+  <main class="page-shell teacher-page-shell oral-exams-shell">
+    <header class="attendance-page-header">
+      <h1>Усмени испити</h1>
+      <p><a href="{{ app_url_for('main.index') }}">Назад на распоред</a></p>
+    </header>
+
+    <section class="attendance-panel oral-exams-toolbar">
+      <label for="oral-exam-term">Испитни рок:</label>
+      <select id="oral-exam-term"></select>
+
+      <label for="oral-exam-session">Предмет:</label>
+      <select id="oral-exam-session"></select>
+    </section>
+
+    <section id="oral-exams-groups" aria-live="polite"></section>
+    <section id="oral-exams-calendar" class="attendance-panel" aria-live="polite" hidden></section>
+    <p id="oral-exams-status" class="status" hidden></p>
+  </main>
+
+  <script>
+    window.APP_CONFIG = {
+        BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
+    };
+  </script>
+  <script type="module" src="{{ app_url_for('static', filename='js/oralExams.js') }}"></script>
+</body>
+</html>

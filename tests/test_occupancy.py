@@ -5,7 +5,9 @@ import app as myapp
 import occupancy as occmod
 
 
-def test_occupancy_reservation(client, db):
+def test_occupancy_reservation(client, db, monkeypatch):
+
+    monkeypatch.setattr(occmod, "attendance_is_open_now", lambda row, now=None: False)
 
     room_id = db.room("R1")
     future_date = (date.today() + timedelta(days=1)).isoformat()

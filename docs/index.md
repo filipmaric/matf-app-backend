@@ -8,6 +8,7 @@ This site documents MatF App, its deployment setup, and the Python modules that 
 - [Setup](setup.md) for a fresh clone
 - [Production](deployment.md) for `systemd` deployment
 - [Attendance](attendance.md) for QR attendance flow
+- [Oral-exam scheduling](oral_exams.md) for teacher-managed oral-exam terms
 - [Mobile client contract](mobile_client.md) for an iOS or other native mobile port
 - [API reference](api.md) for the module-level Python API docs
 

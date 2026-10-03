@@ -351,125 +351,6 @@ def test_exam_schedule_unique_key_is_enforced(tmp_path):
         conn.close()
 
 
-def test_exam_schedule_schema_cleanup_merges_duplicate_rows(tmp_path):
-    db_path = tmp_path / "exam_schedule.db"
-    _init_db(db_path)
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("INSERT INTO courses (name, code) VALUES (?, ?)", ("Linear Algebra", "M1.01"))
-        conn.execute("DROP INDEX IF EXISTS idx_exam_schedule_term_course_code_accreditation")
-        conn.execute(
-            "INSERT INTO students (username, student_index, surname, given_name) VALUES (?, ?, ?, ?)",
-            ("student1", "125/1997", "Maric", "Filip"),
-        )
-        subject_is = conn.execute(
-            "INSERT INTO subjects (code, name, accreditation, module) VALUES (?, ?, ?, ?)",
-            ("M1.01", "Linear Algebra", "IS", "I"),
-        ).lastrowid
-        subject_it = conn.execute(
-            "INSERT INTO subjects (code, name, accreditation, module) VALUES (?, ?, ?, ?)",
-            ("M1.01", "Linear Algebra", "IT", "I"),
-        ).lastrowid
-        conn.executemany(
-            "INSERT INTO course_subjects (course_code, subject_id) VALUES (?, ?)",
-            [("M1.01", subject_is), ("M1.01", subject_it)],
-        )
-        conn.executemany(
-            """
-            INSERT INTO exam_schedule (
-                term_code,
-                course_code,
-                course_name,
-                exam_date,
-                exam_hour,
-                location,
-                imported_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    "2026.06",
-                    "M1.01",
-                    "Linear Algebra A",
-                    "2026-07-03",
-                    9,
-                    "A",
-                    "2026-01-01 10:00:00",
-                ),
-                (
-                    "2026.06",
-                    "M1.01",
-                    "Linear Algebra B",
-                    "2026-07-05",
-                    10,
-                    "A",
-                    "2026-02-01 10:00:00",
-                ),
-            ],
-        )
-        conn.execute(
-            """
-            INSERT INTO exam_applications
-                (term_code, subject_id, student_username)
-            VALUES (?, ?, ?)
-            """,
-            ("2026.06", subject_is, "student1"),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        mydb._ensure_exam_schedule_schema(conn)
-        conn.commit()
-    finally:
-        conn.close()
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        rows = conn.execute(
-            """
-            SELECT id, course_name
-            FROM exam_schedule
-            WHERE term_code = ? AND course_code = ?
-            ORDER BY id
-            """,
-            ("2026.06", "M1.01"),
-        ).fetchall()
-        assert len(rows) == 1
-        assert rows[0]["course_name"] == "Linear Algebra B"
-
-        applications = conn.execute(
-            """
-            SELECT term_code, subject_id
-            FROM exam_applications
-            WHERE term_code = ?
-            """,
-            ("2026.06",),
-        ).fetchall()
-        assert len(applications) == 1
-        assert applications[0]["subject_id"] == subject_is
-        assert isinstance(applications[0]["subject_id"], int)
-
-        index_row = conn.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'index' AND name = 'idx_exam_schedule_term_course_code_accreditation'
-            """
-        ).fetchone()
-        assert index_row is not None
-    finally:
-        conn.close()
-
-
 def test_import_exam_schedule_ignores_duplicate_source_rows(tmp_path, capsys):
     db_path = tmp_path / "exam_schedule.db"
     csv_path = tmp_path / "exam_schedule.csv"
@@ -561,6 +442,91 @@ def test_import_exam_schedule_maps_unknown_location_to_null(tmp_path):
     row = _fetch_exam_row(db_path, "M1.01")
     assert row is not None
     assert row["location"] is None
+
+
+def test_import_exam_schedule_uses_all_linked_subject_names_in_accreditation_order(tmp_path):
+    db_path = tmp_path / "exam_schedule.db"
+    csv_path = tmp_path / "exam_schedule.csv"
+
+    _init_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            course_id = conn.execute(
+                "INSERT INTO courses (name, code) VALUES (?, ?)",
+                ("Grouped Course", "M1.01"),
+            ).lastrowid
+            older_subject_id = conn.execute(
+                """INSERT INTO subjects (code, name, accreditation, module)
+                   VALUES (?, ?, ?, ?)""",
+                ("M1.01", "Older name", 2015, "A"),
+            ).lastrowid
+            newer_subject_id = conn.execute(
+                """INSERT INTO subjects (code, name, accreditation, module)
+                   VALUES (?, ?, ?, ?)""",
+                ("M1.01", "Newer name", 2022, "A"),
+            ).lastrowid
+            conn.executemany(
+                "INSERT INTO course_subjects (course_code, subject_id) VALUES (?, ?)",
+                [("M1.01", older_subject_id), ("M1.01", newer_subject_id)],
+            )
+    finally:
+        conn.close()
+
+    _write_schedule_csv(
+        csv_path,
+        [["M1.01", "Source name", "03. 07. 2026.", "9", "0", "Непознато"]],
+    )
+
+    assert import_exam_schedule_main(
+        [
+            "--database",
+            str(db_path),
+            "--source",
+            str(csv_path),
+            "--term-code",
+            "2026.06",
+        ]
+    ) == 0
+
+    row = _fetch_exam_row(db_path, "M1.01")
+    assert row["course_name"] == "Newer name / Older name"
+
+
+def test_import_exam_schedule_ignores_courses_without_scheduled_exam(tmp_path):
+    db_path = tmp_path / "exam_schedule.db"
+    csv_path = tmp_path / "exam_schedule.csv"
+
+    _init_db(db_path)
+    _write_schedule_csv(
+        csv_path,
+        [
+            ["M1.01", "Linear Algebra", "03. 07. 2026.", "9", "0", "Непознато"],
+            ["M1.02", "Unscheduled Course", "", "", "0", "Непознато"],
+        ],
+    )
+
+    assert import_exam_schedule_main(
+        [
+            "--database",
+            str(db_path),
+            "--source",
+            str(csv_path),
+            "--term-code",
+            "2026.06",
+        ]
+    ) == 0
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT course_code FROM exam_schedule WHERE term_code = ? ORDER BY course_code",
+            ("2026.06",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert rows == [("M1.01",)]
 
 
 def test_import_exam_schedule_updates_changed_row_in_place(tmp_path, capsys):

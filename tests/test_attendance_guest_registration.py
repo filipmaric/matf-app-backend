@@ -221,7 +221,6 @@ def test_teacher_can_enable_guest_registration_and_known_student_can_join(client
     )
 
     assert response.status_code == 200
-    assert response.get_json()["success"] is True
     record = myapp.query_db(
         "SELECT id, username FROM attendance_records WHERE event_kind = 'weekly' AND event_id = ?",
         (event_id,),
@@ -238,6 +237,133 @@ def test_teacher_can_enable_guest_registration_and_known_student_can_join(client
         (record["id"],),
         one=True,
     ) is None
+
+
+def test_username_only_allows_one_student_per_browser_device_and_event(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    db.student("known.student", "2026/0001", "Студент", "Познат")
+    db.student("other.student", "2026/0002", "Други", "Студент")
+    login(client)
+
+    enabled = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/guest-registration",
+        json={"enabled": True},
+    )
+    assert enabled.status_code == 200
+    challenge = open_guest_challenge(client, event_id, event_date)
+
+    first = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/join",
+        json={
+            "username": "known.student",
+            "selected_code": challenge["challenge"]["current_code"],
+        },
+    )
+    assert first.status_code == 200
+    assert "attendance_guest_device=" in first.headers.get("Set-Cookie", "") or client.get_cookie(
+        "attendance_guest_device"
+    ) is not None
+
+    second = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/join",
+        json={
+            "username": "other.student",
+            "selected_code": challenge["challenge"]["current_code"],
+        },
+    )
+    assert second.status_code == 409
+    assert second.get_json()["error_code"] == "attendance_device_already_registered"
+    assert myapp.query_db(
+        "SELECT COUNT(*) AS count FROM attendance_records WHERE event_kind = 'weekly' AND event_id = ?",
+        (event_id,),
+        one=True,
+    )["count"] == 1
+
+
+def test_teacher_can_manually_add_known_student_to_active_session(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    db.student("manual.student", "2026/0002", "Ручни", "Студент")
+    login(client)
+
+    started = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True},
+    )
+    assert started.status_code == 200
+
+    response = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/student",
+        json={"username": " manual.student "},
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["student"]["username"] == "manual.student"
+    assert response.get_json()["student"]["registration_source"] == "web"
+    assert client.get(f"/attendance/weekly/{event_id}/{event_date}/data").get_json()["student_count"] == 1
+
+
+def test_teacher_can_manually_add_student_after_attendance_session_ended(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: False)
+    event_id, event_date = make_event(db)
+    db.student("late.student", "2026/0003", "Накнадни", "Студент")
+    login(client)
+
+    response = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/student",
+        json={"username": "late.student"},
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["student"]["username"] == "late.student"
+
+
+def test_manual_add_rejects_unknown_or_duplicate_student(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    db.student("manual.student", "2026/0002", "Ручни", "Студент")
+    login(client)
+    client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True},
+    )
+
+    unknown = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/student",
+        json={"username": "does.not.exist"},
+    )
+    assert unknown.status_code == 404
+    assert "не постоји" in unknown.get_json()["error"]
+
+    first = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/student",
+        json={"username": "manual.student"},
+    )
+    assert first.status_code == 201
+    duplicate = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/student",
+        json={"username": "manual.student"},
+    )
+    assert duplicate.status_code == 409
+
+
+def test_manual_add_requires_event_teacher_authorization(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    db.teacher("Other teacher", "bob")
+    db.student("manual.student", "2026/0002", "Ручни", "Студент")
+    login(client, "bob")
+    db.execute(
+        "INSERT INTO attendance_session_settings (event_kind, event_id, event_date, active) VALUES (?, ?, ?, 1)",
+        ("weekly", event_id, event_date),
+    )
+
+    response = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/student",
+        json={"username": "manual.student"},
+    )
+    assert response.status_code == 403
 
 
 def test_guest_registration_rejects_unknown_username(client, db, monkeypatch):

@@ -41,9 +41,12 @@ def _create_single_reservation(data, username, is_service, commit=True):
         abort(400, 'Недостају обавезна поља.')
 
     try:
-        datetime.datetime.strptime(date, '%Y-%m-%d').date()
+        parsed_date = datetime.datetime.strptime(date, '%Y-%m-%d').date()
     except ValueError:
         abort(400, 'Неисправан формат датума. Очекивани формат је ГГГГ-ММ-ДД.')
+
+    if parsed_date < datetime.date.today():
+        abort(400, 'Резервације није могуће правити за прошле датуме.')
 
     if not (isinstance(start, int) and isinstance(end, int) and start < end):
         abort(400, 'Неисправно изабрани термини.')

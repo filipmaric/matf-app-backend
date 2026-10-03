@@ -8,7 +8,7 @@ import os
 # Absolute path to the application directory.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Shared workspace data directory used by import/export tools and the app database.
-DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, "data"))
+DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, os.pardir, "data"))
 # SQLite database file used by the application.
 DATABASE = os.getenv("DATABASE", os.path.join(DATA_DIR, "app.db"))
 # SQL schema file used when creating the database from scratch.

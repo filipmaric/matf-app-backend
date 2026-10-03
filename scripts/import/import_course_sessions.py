@@ -75,12 +75,6 @@ def ensure_schema(conn: sqlite3.Connection, schema_path: Path) -> None:
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'course_sessions'"
     ).fetchone()
     if has_course_sessions:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(course_sessions)").fetchall()}
-        if "weekly_lessons" not in columns:
-            conn.execute(
-                "ALTER TABLE course_sessions ADD COLUMN weekly_lessons REAL NOT NULL DEFAULT 0"
-            )
-            conn.commit()
         return
     if not schema_path.exists():
         raise FileNotFoundError(f"Schema file not found: {schema_path}")

@@ -385,13 +385,54 @@ function renderStopAttendanceControl(root, kind, eventId, eventDate, pageRoot) {
     root.appendChild(box);
 }
 
-function renderRoster(root, students, kind, eventId, eventDate, pageRoot) {
+function renderRoster(root, students, kind, eventId, eventDate, pageRoot, sessionActive) {
     const section = document.createElement('section');
     section.className = 'attendance-roster';
 
     const title = document.createElement('h3');
     title.textContent = 'Пријављени студенти';
     section.appendChild(title);
+
+    if (sessionActive) {
+        const form = document.createElement('form');
+        form.className = 'attendance-add-student-form';
+
+        const label = document.createElement('label');
+        label.textContent = 'Ручно додај студента';
+        label.htmlFor = 'attendance-add-student-username';
+        form.appendChild(label);
+
+        const controls = document.createElement('div');
+        controls.className = 'attendance-add-student-controls';
+        const input = document.createElement('input');
+        input.className = 'attendance-add-student-username';
+        input.id = 'attendance-add-student-username';
+        input.name = 'username';
+        input.type = 'text';
+        input.placeholder = 'Корисничко име (нпр. mr20123)';
+        input.autocomplete = 'off';
+        input.required = true;
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.textContent = 'Додај';
+        controls.append(input, button);
+        form.appendChild(controls);
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            button.disabled = true;
+            try {
+                await API.addAttendanceStudent(kind, eventId, eventDate, input.value.trim());
+                input.value = '';
+                await refresh(pageRoot);
+            } catch (error) {
+                window.alert(error.data?.error || 'Грешка при додавању студента.');
+            } finally {
+                button.disabled = false;
+            }
+        });
+        section.appendChild(form);
+    }
 
     if (!students.length) {
         const p = document.createElement('p');
@@ -651,6 +692,16 @@ function showAccessMessage(root, messageText) {
 async function refresh(root) {
     const { kind, eventId, eventDate } = root.dataset;
     const data = await API.getAttendanceRoster(kind, eventId, eventDate, false, !qrSessionPaused);
+    const previousRoster = root.querySelector('.attendance-roster');
+    const previousRosterScrollTop = previousRoster?.scrollTop || 0;
+    const previousRosterAtBottom = previousRoster
+        ? previousRoster.scrollHeight - previousRoster.scrollTop - previousRoster.clientHeight < 8
+        : false;
+    const previousInput = root.querySelector('.attendance-add-student-username');
+    const preserveInputFocus = document.activeElement === previousInput;
+    const previousInputValue = previousInput?.value || '';
+    const previousSelectionStart = previousInput?.selectionStart;
+    const previousSelectionEnd = previousInput?.selectionEnd;
     root.innerHTML = '';
     if (countdownHandle) {
         clearInterval(countdownHandle);
@@ -685,7 +736,32 @@ async function refresh(root) {
     if (data.attendance_session_active) {
         renderStopAttendanceControl(left, kind, eventId, eventDate, root);
     }
-    renderRoster(right, data.students || [], kind, eventId, eventDate, root);
+    renderRoster(
+        right,
+        data.students || [],
+        kind,
+        eventId,
+        eventDate,
+        root,
+        Boolean(data.attendance_session_active),
+    );
+    const currentRoster = right.querySelector('.attendance-roster');
+    if (currentRoster) {
+        currentRoster.scrollTop = previousRosterAtBottom
+            ? currentRoster.scrollHeight
+            : previousRosterScrollTop;
+    }
+
+    const currentInput = root.querySelector('.attendance-add-student-username');
+    if (currentInput) {
+        currentInput.value = previousInputValue;
+        if (preserveInputFocus) {
+            currentInput.focus();
+            const selectionStart = previousSelectionStart ?? currentInput.value.length;
+            const selectionEnd = previousSelectionEnd ?? selectionStart;
+            currentInput.setSelectionRange(selectionStart, selectionEnd);
+        }
+    }
 
     if (data.students && data.students.length) {
         const actions = document.createElement('div');

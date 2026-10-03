@@ -11,44 +11,51 @@ from datetime import datetime, timedelta, timezone
 from flask import g, has_app_context
 
 import config
+from group_metadata import infer_group_metadata
 
 
-def _ensure_calendar_schema(conn):
-    """Migrate the calendar from is_working to semantic day kinds."""
-    if not _table_exists(conn, "days"):
+def _ensure_group_metadata_schema(conn):
+    """Add and populate study metadata derived from existing group names."""
+    if not _table_exists(conn, "groups"):
         return
 
     columns = {
         row[1]
-        for row in conn.execute("PRAGMA table_info(days)").fetchall()
+        for row in conn.execute("PRAGMA table_info(groups)").fetchall()
     }
-    if "kind" not in columns:
-        if "is_working" in columns:
-            conn.executescript(
-                """
-                CREATE TABLE days_new (
-                    date TEXT PRIMARY KEY,
-                    kind TEXT NOT NULL DEFAULT 'non_working'
-                        CHECK(kind IN ('teaching', 'makeup', 'exam', 'colloquium', 'non_working')),
-                    week_day INTEGER NOT NULL DEFAULT -1
-                );
-                INSERT INTO days_new (date, kind, week_day)
-                SELECT date,
-                       CASE WHEN is_working = 1 THEN 'teaching' ELSE 'non_working' END,
-                       week_day
-                FROM days;
-                DROP TABLE days;
-                ALTER TABLE days_new RENAME TO days;
-                """
-            )
-        else:
-            conn.execute(
-                """
-                ALTER TABLE days
-                ADD COLUMN kind TEXT NOT NULL DEFAULT 'non_working'
-                    CHECK(kind IN ('teaching', 'makeup', 'exam', 'colloquium', 'non_working'))
-                """
-            )
+    for column, definition in (
+        ("study_program", "TEXT"),
+        ("module", "TEXT"),
+        ("accreditation", "INTEGER"),
+        ("study_year", "INTEGER"),
+    ):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE groups ADD COLUMN {column} {definition}")
+
+    rows = conn.execute(
+        """
+        SELECT id, name
+        FROM groups
+        WHERE study_program IS NULL
+           OR module IS NULL
+           OR accreditation IS NULL
+           OR study_year IS NULL
+        """
+    ).fetchall()
+    for group_id, name in rows:
+        study_program, module, accreditation, study_year = infer_group_metadata(name)
+        conn.execute(
+            """
+            UPDATE groups
+            SET study_program = COALESCE(study_program, ?),
+                module = COALESCE(module, ?),
+                accreditation = COALESCE(accreditation, ?),
+                study_year = COALESCE(study_year, ?)
+            WHERE id = ?
+            """,
+            (study_program, module, accreditation, study_year, group_id),
+        )
+    conn.commit()
 
 
 def _app_module():
@@ -127,6 +134,18 @@ def _ensure_attendance_schema(conn):
             PRIMARY KEY(event_kind, event_id, event_date)
         );
 
+        CREATE TABLE IF NOT EXISTS attendance_guest_devices (
+            device_token_hash TEXT NOT NULL,
+            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+            event_id INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            username TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY(device_token_hash, event_kind, event_id, event_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_attendance_guest_devices_event
+            ON attendance_guest_devices(event_kind, event_id, event_date);
+
         CREATE TABLE IF NOT EXISTS attendance_session_settings (
             event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
             event_id INTEGER NOT NULL,
@@ -151,80 +170,6 @@ def _ensure_attendance_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
             ON weekly_sessions(day_of_week, room_id, start_slot);
-        """
-    )
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(attendance_records)").fetchall()
-    }
-    if "registration_source" not in columns:
-        conn.execute(
-            "ALTER TABLE attendance_records ADD COLUMN registration_source TEXT NOT NULL DEFAULT 'web'"
-        )
-    if "client_ip" not in columns:
-        conn.execute("ALTER TABLE attendance_records ADD COLUMN client_ip TEXT")
-    if "geofence_checked" not in columns:
-        conn.execute(
-            "ALTER TABLE attendance_records ADD COLUMN geofence_checked INTEGER NOT NULL DEFAULT 0"
-        )
-    if "failed_attempts_before_success" not in columns:
-        conn.execute(
-            "ALTER TABLE attendance_records ADD COLUMN failed_attempts_before_success INTEGER NOT NULL DEFAULT 0"
-        )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS attendance_attempt_geofence_settings (
-            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
-            event_id INTEGER NOT NULL,
-            event_date TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
-            PRIMARY KEY(event_kind, event_id, event_date)
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS attendance_guest_registration_settings (
-            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
-            event_id INTEGER NOT NULL,
-            event_date TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
-            PRIMARY KEY(event_kind, event_id, event_date)
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS attendance_session_settings (
-            event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
-            event_id INTEGER NOT NULL,
-            event_date TEXT NOT NULL,
-            active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY(event_kind, event_id, event_date)
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS attendance_spot_check_flags (
-            attendance_record_id INTEGER PRIMARY KEY,
-            teacher_username TEXT NOT NULL,
-            flagged_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY(attendance_record_id) REFERENCES attendance_records(id) ON DELETE CASCADE
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_attendance_records_username_event
-            ON attendance_records(username, event_kind, event_id, event_date)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
-            ON weekly_sessions(day_of_week, room_id, start_slot)
         """
     )
     conn.commit()
@@ -280,51 +225,6 @@ def _ensure_mobile_auth_schema(conn):
             ON mobile_auth_device_login_policies(last_login_date);
         """
     )
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(mobile_auth_users)").fetchall()
-    }
-    if "two_factor_enabled" not in columns:
-        conn.execute(
-            """
-            ALTER TABLE mobile_auth_users
-            ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0
-            CHECK(two_factor_enabled IN (0, 1))
-            """
-        )
-    if "two_factor_setup_code" not in columns:
-        conn.execute("ALTER TABLE mobile_auth_users ADD COLUMN two_factor_setup_code TEXT")
-    if "two_factor_setup_expires_at" not in columns:
-        conn.execute(
-            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_setup_expires_at TEXT"
-        )
-    if "two_factor_link_ticket" not in columns:
-        conn.execute("ALTER TABLE mobile_auth_users ADD COLUMN two_factor_link_ticket TEXT")
-    if "two_factor_link_ticket_expires_at" not in columns:
-        conn.execute(
-            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_link_ticket_expires_at TEXT"
-        )
-    if "two_factor_link_action" not in columns:
-        conn.execute("ALTER TABLE mobile_auth_users ADD COLUMN two_factor_link_action TEXT")
-    if "two_factor_created_at" not in columns:
-        conn.execute(
-            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_created_at TEXT"
-        )
-    if "two_factor_confirmed_at" not in columns:
-        conn.execute(
-            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_confirmed_at TEXT"
-        )
-    if "two_factor_last_verified_at" not in columns:
-        conn.execute(
-            "ALTER TABLE mobile_auth_users ADD COLUMN two_factor_last_verified_at TEXT"
-        )
-
-    session_columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(mobile_auth_sessions)").fetchall()
-    }
-    if "last_seen_ip" not in session_columns:
-        conn.execute("ALTER TABLE mobile_auth_sessions ADD COLUMN last_seen_ip TEXT")
     conn.commit()
 
 
@@ -384,9 +284,6 @@ def _ensure_subject_schema(conn):
             ON subjects(code, accreditation, module);
         """
     )
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(subjects)").fetchall()}
-    if "year" not in columns:
-        conn.execute("ALTER TABLE subjects ADD COLUMN year INTEGER NOT NULL DEFAULT 1")
     conn.commit()
 
 
@@ -430,82 +327,48 @@ def _ensure_course_subject_schema(conn):
     conn.commit()
 
 
-def _ensure_weekly_session_schema(conn):
-    """Create weekly session identity columns and indexes if missing."""
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(weekly_sessions)").fetchall()
-    }
-    if not columns:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS weekly_sessions (
-                id INTEGER PRIMARY KEY,
-                session_id INTEGER NOT NULL,
-                meeting_no INTEGER NOT NULL DEFAULT 1,
-                room_id INTEGER NOT NULL,
-                day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
-                start_slot INTEGER NOT NULL,
-                end_slot INTEGER NOT NULL,
-                FOREIGN KEY(session_id) REFERENCES course_sessions(id),
-                FOREIGN KEY(room_id) REFERENCES rooms(id)
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_sessions_session_meeting
-                ON weekly_sessions(session_id, meeting_no);
-            CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
-                ON weekly_sessions(day_of_week, room_id, start_slot);
-            """
-        )
-        conn.commit()
-        return
-
-    if "meeting_no" not in columns:
-        conn.execute(
-            "ALTER TABLE weekly_sessions ADD COLUMN meeting_no INTEGER NOT NULL DEFAULT 1"
-        )
-        session_ids = [
-            row[0]
-            for row in conn.execute(
-                "SELECT DISTINCT session_id FROM weekly_sessions ORDER BY session_id"
-            ).fetchall()
-        ]
-        for session_id in session_ids:
-            rows = conn.execute(
-                "SELECT id FROM weekly_sessions WHERE session_id = ? ORDER BY id",
-                (session_id,),
-            ).fetchall()
-            for meeting_no, row in enumerate(rows, start=1):
-                conn.execute(
-                    "UPDATE weekly_sessions SET meeting_no = ? WHERE id = ?",
-                    (meeting_no, row[0]),
-                )
-
-    conn.execute(
+def _ensure_subject_student_counts_schema(conn):
+    """Create imported aggregate student counts for subjects."""
+    conn.executescript(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_sessions_session_meeting
-            ON weekly_sessions(session_id, meeting_no)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
-            ON weekly_sessions(day_of_week, room_id, start_slot)
+        CREATE TABLE IF NOT EXISTS subject_student_counts (
+            subject_id INTEGER NOT NULL,
+            semester_id INTEGER NOT NULL,
+            student_count INTEGER,
+            PRIMARY KEY (subject_id, semester_id),
+            CHECK (student_count IS NULL OR student_count >= 0),
+            FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+            FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_subject_student_counts_semester
+            ON subject_student_counts(semester_id, subject_id);
         """
     )
     conn.commit()
 
 
-def _ensure_course_session_schema(conn):
-    """Add course-session workload fields to existing databases."""
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(course_sessions)").fetchall()
-    }
-    if columns and "weekly_lessons" not in columns:
-        conn.execute(
-            "ALTER TABLE course_sessions ADD COLUMN weekly_lessons REAL NOT NULL DEFAULT 0"
-        )
-        conn.commit()
+def _ensure_weekly_session_schema(conn):
+    """Create the current weekly-session table and indexes if missing."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_sessions (
+            id INTEGER PRIMARY KEY,
+            session_id INTEGER NOT NULL,
+            meeting_no INTEGER NOT NULL DEFAULT 1,
+            room_id INTEGER NOT NULL,
+            day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+            start_slot INTEGER NOT NULL,
+            end_slot INTEGER NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES course_sessions(id),
+            FOREIGN KEY(room_id) REFERENCES rooms(id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_sessions_session_meeting
+            ON weekly_sessions(session_id, meeting_no);
+        CREATE INDEX IF NOT EXISTS idx_weekly_sessions_day_room_start
+            ON weekly_sessions(day_of_week, room_id, start_slot);
+        """
+    )
+    conn.commit()
 
 
 def _ensure_student_enrollment_schema(conn):
@@ -781,24 +644,6 @@ def _ensure_exam_schedule_schema(conn):
             ON exam_schedule(term_code, exam_date, exam_hour);
         """
     )
-    conn.execute("DROP INDEX IF EXISTS idx_exam_schedule_term_course_code_accreditation")
-    conn.execute("DROP TRIGGER IF EXISTS trg_exam_schedule_location_insert")
-    conn.execute("DROP TRIGGER IF EXISTS trg_exam_schedule_location_update")
-    conn.execute(
-        """
-        DELETE FROM exam_schedule
-        WHERE id NOT IN (
-            SELECT MAX(id)
-            FROM exam_schedule
-            GROUP BY term_code, course_code
-        )
-        """
-    )
-    current_columns = {row[1] for row in conn.execute("PRAGMA table_info(exam_schedule)").fetchall()}
-    if "accreditation" in current_columns:
-        conn.execute("ALTER TABLE exam_schedule DROP COLUMN accreditation")
-    if "source_course_name" in current_columns:
-        conn.execute("ALTER TABLE exam_schedule RENAME COLUMN source_course_name TO course_name")
     conn.execute(
         """
         CREATE TRIGGER IF NOT EXISTS trg_exam_schedule_location_insert
@@ -858,40 +703,34 @@ def _ensure_exam_term_schema(conn):
         """
     )
 
-    existing_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(exam_terms)").fetchall()
-    }
-    if "semester_id" not in existing_columns:
-        conn.execute("ALTER TABLE exam_terms ADD COLUMN semester_id INTEGER")
+    conn.commit()
 
-    rows = conn.execute(
-        """
-        SELECT term_code, start_date, end_date
-        FROM exam_terms
-        WHERE semester_id IS NULL
-        """
-    ).fetchall()
-    for row in rows:
-        semester_row = conn.execute(
-            """
-            SELECT id
-            FROM semesters
-            WHERE start_date <= ? AND end_date >= ?
-            ORDER BY start_date DESC, end_date ASC, id DESC
-            LIMIT 1
-            """,
-            (row[1], row[2]),
-        ).fetchone()
-        if semester_row is None:
-            raise ValueError(
-                "Unable to resolve semester for exam term "
-                f"{row[0]} ({row[1]}..{row[2]})"
-            )
-        conn.execute(
-            "UPDATE exam_terms SET semester_id = ? WHERE term_code = ?",
-            (semester_row[0], row[0]),
-        )
 
+def _ensure_oral_exam_schema(conn):
+    """Create the teacher-managed oral-exam schedule table."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS oral_exam_schedule (
+            id INTEGER PRIMARY KEY,
+            term_code TEXT NOT NULL,
+            course_session_id INTEGER NOT NULL,
+            exam_date TEXT NOT NULL,
+            start_hour INTEGER NOT NULL,
+            end_hour INTEGER NOT NULL,
+            reservation_id INTEGER,
+            teacher_username TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK (start_hour >= 0 AND end_hour <= 24 AND end_hour > start_hour),
+            FOREIGN KEY(term_code) REFERENCES exam_terms(term_code) ON DELETE CASCADE,
+            FOREIGN KEY(course_session_id) REFERENCES course_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY(reservation_id) REFERENCES reservations(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_oral_exam_schedule_term_date_hour
+            ON oral_exam_schedule(term_code, exam_date, start_hour);
+        CREATE INDEX IF NOT EXISTS idx_oral_exam_schedule_group
+            ON oral_exam_schedule(course_session_id, term_code);
+        """
+    )
     conn.commit()
 
 
@@ -983,55 +822,6 @@ def _ensure_building_locations_schema(conn):
         );
         """
     )
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(building_locations)").fetchall()
-    }
-    if "building_name" not in columns and "name" in columns:
-        conn.execute("ALTER TABLE building_locations ADD COLUMN building_name TEXT")
-        conn.execute(
-            """
-            UPDATE building_locations
-            SET building_name = name
-            WHERE building_name IS NULL
-            """
-        )
-    conn.commit()
-
-
-def _ensure_room_building_name_schema(conn):
-    """Create the room building-name column if an older database still uses location."""
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(rooms)").fetchall()
-    }
-    if "building_name" not in columns:
-        conn.execute("ALTER TABLE rooms ADD COLUMN building_name TEXT")
-        if "location" in columns:
-            conn.execute(
-                """
-                UPDATE rooms
-                SET building_name = location
-                WHERE building_name IS NULL
-                """
-            )
-    conn.commit()
-
-
-def _ensure_courses_schema(conn):
-    """Create the course computer-requirement column for older databases."""
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(courses)").fetchall()
-    }
-    if "requires_computers" not in columns:
-        conn.execute(
-            """
-            ALTER TABLE courses
-            ADD COLUMN requires_computers INTEGER NOT NULL DEFAULT 0
-            CHECK(requires_computers IN (0, 1))
-            """
-        )
     conn.commit()
 
 
@@ -1074,12 +864,12 @@ def _ensure_reservation_overlap_schema(conn):
 
 def _ensure_extra_schemas(conn):
     """Create the add-on tables used by attendance and Android auth."""
-    _ensure_calendar_schema(conn)
+    _ensure_group_metadata_schema(conn)
     _ensure_semester_schema(conn)
     _ensure_calendar_revision_schema(conn)
-    _ensure_courses_schema(conn)
     _ensure_subject_schema(conn)
     _ensure_course_subject_schema(conn)
+    _ensure_subject_student_counts_schema(conn)
     _ensure_weekly_session_schema(conn)
     _ensure_attendance_schema(conn)
     _ensure_mobile_auth_schema(conn)
@@ -1089,21 +879,16 @@ def _ensure_extra_schemas(conn):
     _ensure_timetable_revision_schema(conn)
     _ensure_exam_schedule_schema(conn)
     _ensure_exam_term_schema(conn)
+    _ensure_oral_exam_schema(conn)
     _ensure_exam_application_schema(conn)
     _ensure_notification_schema(conn)
     _ensure_building_locations_schema(conn)
-    _ensure_room_building_name_schema(conn)
     _ensure_reservation_overlap_schema(conn)
 
 
 def ensure_student_directory_schema(conn):
     """Public helper used by import scripts to ensure the student directory exists."""
     _ensure_student_directory_schema(conn)
-
-
-def ensure_calendar_schema(conn):
-    """Public helper used by calendar import scripts to migrate calendar days."""
-    _ensure_calendar_schema(conn)
 
 
 def ensure_calendar_revision_schema(conn):
@@ -1296,8 +1081,6 @@ def init_db(conn=None):
     try:
         if _database_has_schema(conn):
             _ensure_semester_schema(conn)
-            _ensure_courses_schema(conn)
-            _ensure_course_session_schema(conn)
             _ensure_weekly_session_schema(conn)
             _ensure_extra_schemas(conn)
             return False
@@ -1308,8 +1091,6 @@ def init_db(conn=None):
 
         with open(schema_path, encoding="utf-8") as f:
             conn.executescript(f.read())
-        _ensure_courses_schema(conn)
-        _ensure_course_session_schema(conn)
         _ensure_weekly_session_schema(conn)
         _ensure_extra_schemas(conn)
         conn.commit()
@@ -2148,6 +1929,67 @@ def student_exam_schedule_for_student(student_username, term_code=None, mode="ap
         matches.append(dict(row))
 
     return matches
+
+
+def student_oral_exam_schedule_for_student(student_username, term_code=None, mode="applied"):
+    """Return oral exams scheduled for course sessions attended by a student."""
+    params = [student_username]
+    term_clause = ""
+    if term_code is not None:
+        term_clause = " AND oes.term_code = ?"
+        params.append(term_code)
+    application_clause = ""
+    if mode == "applied":
+        application_clause = """
+          AND EXISTS (
+              SELECT 1
+              FROM exam_applications ea
+              WHERE ea.student_username = se.student_username
+                AND ea.term_code = oes.term_code
+                AND ea.subject_id = se.subject_id
+          )
+        """
+
+    rows = query_db(
+        f"""
+        SELECT DISTINCT oes.id AS oral_exam_id,
+               oes.term_code,
+               c.code AS course_code,
+               c.name AS course_name,
+               oes.exam_date,
+               oes.start_hour,
+               oes.end_hour,
+               r.name AS location,
+               r.building_name AS location_building_name
+        FROM oral_exam_schedule oes
+        JOIN exam_terms et
+          ON et.term_code = oes.term_code
+        JOIN course_sessions cs
+          ON cs.id = oes.course_session_id
+         AND cs.semester_id = et.semester_id
+        JOIN courses c
+          ON c.id = cs.course_id
+        JOIN session_groups sg
+          ON sg.session_id = cs.id
+        JOIN student_enrollments se
+          ON se.group_id = sg.group_id
+         AND se.semester_id = cs.semester_id
+         AND se.student_username = ?
+        JOIN course_subjects csub
+          ON csub.course_code = c.code
+         AND csub.subject_id = se.subject_id
+        LEFT JOIN reservations res
+          ON res.id = oes.reservation_id
+        LEFT JOIN rooms r
+          ON r.id = res.room_id
+        WHERE 1 = 1
+        {term_clause}
+        {application_clause}
+        ORDER BY oes.exam_date, oes.start_hour, c.name, oes.id
+        """,
+        params,
+    )
+    return [dict(row) for row in rows]
 
 
 def exam_terms_all(semester_id=None):

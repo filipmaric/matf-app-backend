@@ -51,7 +51,7 @@ def resolve_academic_year(requested_academic_year):
     for year in years:
         if normalized in {year["academic_year"], str(year["start_year"])}:
             return year
-        abort(404, "Школска година није пронађена.")
+    abort(404, "Школска година није пронађена.")
 
 
 def normalize_season_filter(requested_season):

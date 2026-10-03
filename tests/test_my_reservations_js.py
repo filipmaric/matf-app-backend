@@ -80,7 +80,19 @@ def test_personal_attendance_loads_counts_before_term_details():
     assert "summary=1" not in personal_loader
     assert "API.getAttendanceRoster" in personal_loader
     assert "if (!details.open || loaded) return" in personal_loader
-    assert "createAttendanceListItem(student)" in personal_loader
+    assert "createAttendanceListItem(student, {" in personal_loader
+    assert "createAttendanceAddStudentForm" in personal_loader
+    assert "kind: 'reservation'" in personal_loader
+
+
+def test_term_attendance_can_add_a_student_after_the_term():
+    source = script_text()
+    term_loader = function_body(source, "createLazyAttendanceTerm")
+
+    assert "createAttendanceAddStudentForm" in term_loader
+    assert "API.addAttendanceStudent" in source
+    assert "students = [...students, student]" in term_loader
+    assert "Накнадно додај студента" in source
 
 
 def test_course_sessions_are_loaded_by_expanding_the_lazy_section():
@@ -126,12 +138,23 @@ def test_weekly_attendance_loads_roster_only_for_expanded_term():
     assert "studentCount" in term_loader
 
 
+def test_attendance_rosters_allow_teachers_to_delete_a_student():
+    source = script_text()
+
+    assert "function createAttendanceDeleteButton(student, context)" in source
+    assert "API.deleteAttendanceRecord(" in source
+    assert "Обриши пријаву студента" in source
+    assert "attendance_record_id" in source
+    assert "students = students.filter" in source
+    assert "count.textContent = `(${students.length} присутних)`" in source
+
+
 def test_attendance_download_is_added_only_after_students_are_loaded():
     source = script_text()
 
     assert "function createAttendanceDownloadButton(date, students)" in source
-    assert "createAttendanceDownloadButton(reservation.date, data.students)" in source
-    assert "createAttendanceDownloadButton(date, data.students)" in source
+    assert "createAttendanceDownloadButton(reservation.date, students)" in source
+    assert "createAttendanceDownloadButton(date, students)" in source
     assert "Преузми CSV" in source
     assert "link.href = '#'" in source
     assert "event.preventDefault()" in source

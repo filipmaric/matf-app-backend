@@ -27,6 +27,10 @@ event_date = now.date().isoformat()
 start_slot = max(0, now.hour - 1)
 end_slot = min(23, start_slot + 2)
 day_of_week = now.isoweekday() % 7
+execute_db(
+    "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+    (event_date, "teaching", day_of_week),
+)
 
 semester_id = execute_db(
     """INSERT INTO semesters (academic_year_start, season, start_date, end_date)
@@ -42,6 +46,10 @@ room_id = execute_db(
     "INSERT INTO rooms (name, capacity, type, building_name) VALUES (?, ?, ?, ?)",
     ("E2E сала", 30, "lecture", "E2E зграда"),
 )
+reservation_room_id = execute_db(
+    "INSERT INTO rooms (name, capacity, type, building_name) VALUES (?, ?, ?, ?)",
+    ("E2E сала за резервације", 30, "lecture", "E2E зграда"),
+)
 session_id = execute_db(
     """INSERT INTO course_sessions (course_id, teacher_id, semester_id, type)
        VALUES (?, ?, ?, ?)""",
@@ -53,11 +61,40 @@ event_id = execute_db(
        VALUES (?, ?, ?, ?, ?)""",
     (session_id, room_id, day_of_week, start_slot, end_slot),
 )
+reservation_course_id = execute_db("INSERT INTO courses (name, code) VALUES (?, ?)", ("E2E резервације", "e2e-res"))
+reservation_session_id = execute_db(
+    "INSERT INTO course_sessions (course_id, teacher_id, semester_id, type) VALUES (?, ?, ?, ?)",
+    (reservation_course_id, teacher_id, semester_id, "p"),
+)
+reservation_start_slot = 10
+reservation_end_slot = 12
+reservation_event_id = execute_db(
+    """INSERT INTO weekly_sessions
+       (session_id, room_id, day_of_week, start_slot, end_slot)
+       VALUES (?, ?, ?, ?, ?)""",
+    (reservation_session_id, reservation_room_id, day_of_week,
+     reservation_start_slot, reservation_end_slot),
+)
+execute_db(
+    """INSERT INTO weekly_cancellations (weekly_session_id, date, username)
+       VALUES (?, ?, ?)""",
+    (reservation_event_id, event_date, "e2e-teacher"),
+)
 
 
 @app.get("/__e2e__/attendance-target")
 def attendance_target():
     return jsonify({"event_id": event_id, "event_date": event_date})
+
+
+@app.get("/__e2e__/reservation-target")
+def reservation_target():
+    return jsonify({
+        "room_id": reservation_room_id,
+        "date": event_date,
+        "start_slot": reservation_start_slot,
+        "end_slot": reservation_end_slot,
+    })
 
 
 if __name__ == "__main__":
