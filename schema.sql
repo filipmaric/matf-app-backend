@@ -248,6 +248,7 @@ CREATE TABLE attendance_session_settings (
     event_id INTEGER NOT NULL,
     event_date TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
+    qr_rotation_enabled INTEGER NOT NULL DEFAULT 1 CHECK(qr_rotation_enabled IN (0,1)),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY(event_kind, event_id, event_date)
 );

@@ -622,11 +622,25 @@ body {
     color: #222;
 }
 
+.attendance-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.attendance-toggle-row .attendance-geofence-toggle {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .attendance-geofence-status {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin-left: 12px;
+    flex: 0 0 150px;
+    box-sizing: border-box;
+    margin-left: 0;
     padding: 2px 8px;
     border-radius: 999px;
     font-size: 0.78rem;
@@ -657,6 +671,11 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
+}
+
+.attendance-option-help {
+    margin: 0;
+    color: #374151;
 }
 
 .attendance-guest-registration-warning,

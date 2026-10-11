@@ -4,7 +4,9 @@
 The attendance flow works like this:
 
 1. A teacher opens the attendance page for one lecture or reservation.
-2. The page shows a QR code that rotates every 8 seconds.
+2. The page shows a QR code that rotates every 8 seconds by default. The
+   teacher may disable this before starting the session, in which case the
+   QR join link remains unchanged for that session.
 3. A student scans the QR code and gets a 90-second attendance session.
 4. The student picks a challenge number that rotates every 10 seconds.
 5. The server validates the student credentials and check-in choice.
@@ -42,3 +44,16 @@ The student submission sends:
 - `username`
 - `password`
 - `selected_code`
+
+The QR rotation preference is sent when starting a session:
+
+```http
+POST /attendance/<kind>/<event_id>/<event_date>/session
+Content-Type: application/json
+
+{"active": true, "qr_rotation_enabled": false}
+```
+
+`qr_rotation_enabled` defaults to `true`. This affects only the QR join link;
+the student challenge number continues to rotate independently. The setting
+and session activation are saved together.

@@ -15,6 +15,11 @@ let geofenceErrorShown = false;
 let pollInFlight = false;
 
 const CHALLENGE_ROUND_MS = 10000;
+const STUDENT_USERNAME_PATTERN = /^[A-Za-z]{2}[0-9]{5,6}$/;
+
+function validStudentUsername(value) {
+    return STUDENT_USERNAME_PATTERN.test(value.trim());
+}
 
 function pad2(value) {
     return String(value).padStart(2, '0');
@@ -253,6 +258,9 @@ function renderChallenge(root, data, state = {}) {
     username.id = 'attendance-username';
     username.placeholder = 'Корисничко име (нпр. mr20123)';
     username.required = true;
+    username.pattern = '[A-Za-z]{2}[0-9]{5,6}';
+    username.maxLength = 8;
+    username.minLength = 7;
     username.value = state.username || '';
     username.autocomplete = 'off';
     username.setAttribute('autocomplete', 'off');
@@ -296,9 +304,15 @@ function renderChallenge(root, data, state = {}) {
             if (button.disabled) {
                 return;
             }
+            const usernameValue = username.value.trim();
+            if (!validStudentUsername(usernameValue)) {
+                message.textContent = 'Корисничко име мора имати два слова и пет или шест цифара (нпр. mr20123 или mi251001).';
+                username.focus();
+                return;
+            }
             try {
                 const payload = {
-                    username: username.value,
+                    username: usernameValue,
                     selected_code: Number(option),
                 };
                 if (!guestRegistrationEnabled) {

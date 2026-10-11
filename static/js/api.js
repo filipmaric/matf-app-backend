@@ -145,12 +145,17 @@ export const API = {
         });
         return handleResponse(res, "Грешка при чувању режима пријаве");
     },
-    async setAttendanceSession(kind, eventId, eventDate, active) {
+    async setAttendanceSession(kind, eventId, eventDate, active, qrRotationEnabled = undefined) {
         const res = await fetch(getUrl(`/attendance/${kind}/${eventId}/${eventDate}/session`), {
             method: "POST",
             headers: withCsrfHeaders({ "Content-Type": "application/json" }),
             credentials: "same-origin",
-            body: JSON.stringify({ active }),
+            body: JSON.stringify({
+                active,
+                ...(active && qrRotationEnabled !== undefined
+                    ? { qr_rotation_enabled: qrRotationEnabled }
+                    : {}),
+            }),
         });
         return handleResponse(res, active
             ? "Грешка при покретању пријављивања"

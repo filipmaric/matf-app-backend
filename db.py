@@ -104,6 +104,7 @@ def _ensure_attendance_schema(conn):
             event_id INTEGER NOT NULL,
             event_date TEXT NOT NULL,
             active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0,1)),
+            qr_rotation_enabled INTEGER NOT NULL DEFAULT 1 CHECK(qr_rotation_enabled IN (0,1)),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY(event_kind, event_id, event_date)
         );
@@ -125,6 +126,18 @@ def _ensure_attendance_schema(conn):
             ON weekly_sessions(day_of_week, room_id, start_slot);
         """
     )
+    session_columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(attendance_session_settings)").fetchall()
+    }
+    if "qr_rotation_enabled" not in session_columns:
+        conn.execute(
+            """
+            ALTER TABLE attendance_session_settings
+            ADD COLUMN qr_rotation_enabled INTEGER NOT NULL DEFAULT 1
+            CHECK(qr_rotation_enabled IN (0,1))
+            """
+        )
     conn.commit()
 
 

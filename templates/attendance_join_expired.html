@@ -1,0 +1,22 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Пријава присуства</title>
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
+</head>
+<body>
+  <header class="attendance-page-header">
+    <h1>Пријава присуства</h1>
+  </header>
+
+  <main class="page-shell student-attendance-shell">
+    <div class="attendance-panel attendance-blocked-panel">
+      <h2>QR код није важећи</h2>
+      <p>Поново скенирајте тренутни QR код да бисте се пријавили.</p>
+    </div>
+  </main>
+</body>
+</html>

@@ -30,7 +30,8 @@ Main routes:
 
 - The teacher page and teacher data endpoint require the logged-in teacher who owns the class, or an administrator.
 - The teacher must explicitly start the attendance session before a QR token or challenge is issued.
-- The student QR join URL is a short-lived tokenized link.
+- The student QR join URL is a short-lived tokenized link by default. The
+  teacher can disable QR-token rotation before starting the session.
 - The student challenge and submission endpoints require the attendance attempt cookie created by scanning the QR code.
 - The Android client can call the same challenge and submission endpoints with `Authorization: Bearer <token>`
   plus the scanned `join_token`.
@@ -82,6 +83,19 @@ An active session expires on the server after `ATTENDANCE_SESSION_TTL`
 seconds (120 by default). Closing and reopening the page does not reset this
 timer. After expiry the page shows `Продужи пријављивање`; only that explicit
 teacher action starts a new two-minute interval.
+
+Configure QR rotation when starting the session:
+
+```http
+POST /attendance/<kind>/<event_id>/<event_date>/session
+Content-Type: application/json
+
+{"active": true, "qr_rotation_enabled": false}
+```
+
+`qr_rotation_enabled` defaults to `true`. The setting changes only the QR
+join link; the challenge number continues to rotate independently. The
+setting and session activation are saved together.
 
 The weekly summary endpoint performs the aggregation on the server and returns
 one attendance total per student across the supplied dates. It is used by the

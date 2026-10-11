@@ -914,12 +914,18 @@ def attendance_guest_registration_state_for_event(kind, event_id, event_date):
 def attendance_session_state_for_event(kind, event_id, event_date):
     """Return whether the teacher explicitly started attendance for this event."""
     if kind == "review":
-        return {"active": True, "expired": False, "updated_at": None}
+        return {
+            "active": True,
+            "expired": False,
+            "updated_at": None,
+            "qr_rotation_enabled": True,
+        }
     if kind not in {"weekly", "reservation"}:
         return {"active": False}
     setting = query_db(
         """
         SELECT active,
+               qr_rotation_enabled,
                updated_at,
                CASE WHEN active = 1
                          AND updated_at <= datetime('now', ?)
@@ -935,22 +941,45 @@ def attendance_session_state_for_event(kind, event_id, event_date):
         "active": bool(setting["active"]) and not expired if setting is not None else False,
         "expired": expired,
         "updated_at": setting["updated_at"] if setting is not None else None,
+        "qr_rotation_enabled": bool(setting["qr_rotation_enabled"]) if setting is not None else True,
     }
 
 
-def attendance_session_set_for_event(kind, event_id, event_date, active):
+def attendance_session_set_for_event(
+    kind, event_id, event_date, active, qr_rotation_enabled=None
+):
     """Persist the teacher-controlled attendance session state."""
-    execute_db(
-        """
-        INSERT INTO attendance_session_settings
-            (event_kind, event_id, event_date, active, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(event_kind, event_id, event_date) DO UPDATE SET
-            active = excluded.active,
-            updated_at = excluded.updated_at
-        """,
-        (kind, event_id, event_date, int(bool(active))),
-    )
+    if qr_rotation_enabled is None:
+        execute_db(
+            """
+            INSERT INTO attendance_session_settings
+                (event_kind, event_id, event_date, active, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(event_kind, event_id, event_date) DO UPDATE SET
+                active = excluded.active,
+                updated_at = excluded.updated_at
+            """,
+            (kind, event_id, event_date, int(bool(active))),
+        )
+    else:
+        execute_db(
+            """
+            INSERT INTO attendance_session_settings
+                (event_kind, event_id, event_date, active, qr_rotation_enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(event_kind, event_id, event_date) DO UPDATE SET
+                active = excluded.active,
+                qr_rotation_enabled = excluded.qr_rotation_enabled,
+                updated_at = excluded.updated_at
+            """,
+            (
+                kind,
+                event_id,
+                event_date,
+                int(bool(active)),
+                int(bool(qr_rotation_enabled)),
+            ),
+        )
     return attendance_session_state_for_event(kind, event_id, event_date)
 
 
@@ -1063,15 +1092,24 @@ def attendance_token_for_bucket(kind, event_id, event_date, bucket):
 
 
 def attendance_join_token(kind, event_id, event_date, now=None):
-    """Return the QR token for the current time bucket."""
+    """Return the QR token for the current session configuration."""
+    session_state = attendance_session_state_for_event(kind, event_id, event_date)
+    if not session_state.get("qr_rotation_enabled", True):
+        return attendance_token_for_bucket(kind, event_id, event_date, 0)
     bucket = attendance_token_bucket(now)
     return attendance_token_for_bucket(kind, event_id, event_date, bucket)
 
 
 def attendance_token_is_valid(kind, event_id, event_date, token, now=None):
-    """Accept the current QR token bucket and the previous one for grace."""
+    """Accept the configured static token or the current rotating token."""
     if not token:
         return False
+    session_state = attendance_session_state_for_event(kind, event_id, event_date)
+    if not session_state.get("qr_rotation_enabled", True) and hmac.compare_digest(
+        token,
+        attendance_token_for_bucket(kind, event_id, event_date, 0),
+    ):
+        return True
     now = now or datetime.datetime.now()
     current_bucket = attendance_token_bucket(now)
     for bucket in (current_bucket, current_bucket - 1):
@@ -1250,7 +1288,7 @@ def attendance_join_view_token(kind, event_id, event_date, token):
     if not attendance_session_state_for_event(kind, event_id, event_date)["active"]:
         return jsonify({"error_code": "attendance_not_started", "error": "Наставник још није започео пријављивање."}), 403
     if not attendance_token_is_valid(kind, event_id, event_date, token):
-        abort(404)
+        return render_template("attendance_join_expired.html"), 410
     join_path = url_for(
         'attendance.attendance_join_view',
         kind=kind,
@@ -1379,6 +1417,7 @@ def attendance_roster_data(kind, event_id, event_date):
         'attendance_open': open_now,
         'attendance_session_active': session_state["active"],
         'attendance_session_expired': session_state["expired"],
+        'attendance_qr_rotation_enabled': session_state["qr_rotation_enabled"],
         'attendance_geofence_available': geofence_state["available"],
         'attendance_geofence_enabled': geofence_state["enabled"],
         'attendance_geofence_warning': geofence_state["warning"],
@@ -1522,8 +1561,22 @@ def attendance_session_update(kind, event_id, event_date):
     if active and not attendance_is_open_now(row):
         return jsonify({'error_code': 'attendance_outside_class_time', 'error': attendance_not_open_message()}), 403
 
-    state = attendance_session_set_for_event(kind, event_id, event_date, active)
-    return jsonify({'success': True, 'attendance_session_active': state['active']})
+    qr_rotation_enabled = None
+    if active:
+        qr_rotation_enabled = attendance_boolean_payload(payload, "qr_rotation_enabled")
+        if qr_rotation_enabled is None:
+            qr_rotation_enabled = attendance_session_state_for_event(
+                kind, event_id, event_date
+            )["qr_rotation_enabled"]
+
+    state = attendance_session_set_for_event(
+        kind, event_id, event_date, active, qr_rotation_enabled
+    )
+    return jsonify({
+        'success': True,
+        'attendance_session_active': state['active'],
+        'attendance_qr_rotation_enabled': state['qr_rotation_enabled'],
+    })
 
 
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>/spot_check', methods=['GET'])

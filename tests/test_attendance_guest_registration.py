@@ -1,4 +1,6 @@
 # Copyright (c) 2026 Filip Marić. See LICENCE.
+import datetime
+
 import attendance as attendancemod
 import app as myapp
 
@@ -112,6 +114,65 @@ def test_attendance_requires_explicit_teacher_start(client, db, monkeypatch):
     after_stop = client.get(f"/attendance/weekly/{event_id}/{event_date}/data")
     assert after_stop.get_json()["attendance_session_active"] is False
     assert "join_token" not in after_stop.get_json()
+
+
+def test_qr_rotation_is_enabled_by_default(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    login(client)
+
+    started = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True},
+    )
+    assert started.status_code == 200
+
+    first = client.get(f"/attendance/weekly/{event_id}/{event_date}/data").get_json()
+    assert first["attendance_qr_rotation_enabled"] is True
+    assert first["join_token"] == myapp.attendance_join_token(
+        "weekly", event_id, event_date
+    )
+
+
+def test_teacher_can_keep_qr_token_static_for_the_session(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    login(client)
+
+    started = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True, "qr_rotation_enabled": False},
+    )
+    assert started.status_code == 200
+    assert started.get_json()["attendance_qr_rotation_enabled"] is False
+
+    first_token = myapp.attendance_join_token(
+        "weekly", event_id, event_date, now=datetime.datetime(2026, 3, 9, 10, 0)
+    )
+    later_token = myapp.attendance_join_token(
+        "weekly", event_id, event_date, now=datetime.datetime(2026, 3, 9, 10, 1)
+    )
+    assert first_token == later_token
+    assert myapp.attendance_token_is_valid(
+        "weekly", event_id, event_date, first_token,
+        now=datetime.datetime(2026, 3, 9, 12, 0),
+    )
+
+    data = client.get(f"/attendance/weekly/{event_id}/{event_date}/data").get_json()
+    assert data["attendance_qr_rotation_enabled"] is False
+    assert data["join_token"] == first_token
+
+
+def test_qr_rotation_setting_is_applied_when_session_starts(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    login(client)
+    response = client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True, "qr_rotation_enabled": False},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["attendance_qr_rotation_enabled"] is False
 
 
 def test_stopping_session_rejects_an_already_open_attempt(client, db, monkeypatch):
@@ -384,6 +445,24 @@ def test_guest_registration_rejects_unknown_username(client, db, monkeypatch):
     assert response.status_code == 404
     assert response.get_json()["error_code"] == "attendance_unknown_username"
     assert response.get_json()["error"] == "Корисничко име не постоји."
+
+
+def test_expired_qr_token_shows_rescan_message(client, db, monkeypatch):
+    monkeypatch.setattr(attendancemod, "attendance_is_open_now", lambda row, now=None: True)
+    event_id, event_date = make_event(db)
+    login(client)
+    client.post(
+        f"/attendance/weekly/{event_id}/{event_date}/session",
+        json={"active": True},
+    )
+
+    response = client.get(
+        f"/attendance/weekly/{event_id}/{event_date}/join/not-a-valid-token"
+    )
+
+    assert response.status_code == 410
+    assert "QR код није важећи" in response.get_data(as_text=True)
+    assert "Поново скенирајте тренутни QR код" in response.get_data(as_text=True)
 
 
 def test_guest_registration_setting_requires_event_owner(client, db, monkeypatch):

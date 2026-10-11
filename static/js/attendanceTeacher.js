@@ -10,6 +10,7 @@ let countdownExpiresAt = null;
 let qrSessionTimerHandle = null;
 let qrSessionPaused = false;
 let pollInFlight = false;
+let pendingQrRotationEnabled = null;
 
 const QR_SESSION_DURATION_MS = 2 * 60 * 1000;
 
@@ -262,8 +263,11 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
 
     label.appendChild(checkbox);
     label.appendChild(text);
-    box.appendChild(label);
-    box.appendChild(status);
+    const controls = document.createElement('div');
+    controls.className = 'attendance-toggle-row';
+    controls.appendChild(label);
+    controls.appendChild(status);
+    box.appendChild(controls);
 
     checkbox.addEventListener('change', async () => {
         checkbox.disabled = true;
@@ -306,8 +310,16 @@ function renderGuestRegistrationControl(root, data, kind, eventId, eventDate, pa
 
     label.appendChild(checkbox);
     label.appendChild(text);
-    box.appendChild(label);
-    box.appendChild(status);
+    const controls = document.createElement('div');
+    controls.className = 'attendance-toggle-row';
+    controls.appendChild(label);
+    controls.appendChild(status);
+    box.appendChild(controls);
+
+    const help = document.createElement('p');
+    help.className = 'attendance-option-help';
+    help.textContent = 'Када је укључено, студенти се пријављују само корисничким именом; не проверавају се лозинка ни локација.';
+    box.appendChild(help);
 
     checkbox.addEventListener('change', async () => {
         if (checkbox.checked && !window.confirm(
@@ -332,6 +344,51 @@ function renderGuestRegistrationControl(root, data, kind, eventId, eventDate, pa
     root.appendChild(box);
 }
 
+function renderQrRotationControl(root, data, kind, eventId, eventDate, pageRoot) {
+    const box = document.createElement('section');
+    box.className = 'attendance-panel attendance-qr-rotation-panel';
+
+    const label = document.createElement('label');
+    label.className = 'attendance-geofence-toggle';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = pendingQrRotationEnabled ?? data.attendance_qr_rotation_enabled !== false;
+    checkbox.disabled = Boolean(data.attendance_session_active);
+
+    const text = document.createElement('span');
+    text.textContent = 'Мењај QR код';
+
+    const status = document.createElement('span');
+    status.className = `attendance-geofence-status ${
+        checkbox.checked ? 'attendance-geofence-status-on' : 'attendance-geofence-status-off'
+    }`;
+    status.textContent = checkbox.checked ? 'укључено' : 'искључено';
+
+    label.appendChild(checkbox);
+    label.appendChild(text);
+    const controls = document.createElement('div');
+    controls.className = 'attendance-toggle-row';
+    controls.appendChild(label);
+    controls.appendChild(status);
+    box.appendChild(controls);
+
+    const help = document.createElement('p');
+    help.className = 'attendance-option-help';
+    help.textContent = 'Када је искључено, QR код остаје исти током целе сесије пријављивања.';
+    box.appendChild(help);
+
+    checkbox.addEventListener('change', () => {
+        pendingQrRotationEnabled = checkbox.checked;
+        status.textContent = checkbox.checked ? 'укључено' : 'искључено';
+        status.className = `attendance-geofence-status ${
+            checkbox.checked ? 'attendance-geofence-status-on' : 'attendance-geofence-status-off'
+        }`;
+    });
+
+    root.appendChild(box);
+}
+
 function renderStartAttendanceControl(root, kind, eventId, eventDate, pageRoot, expired = false) {
     const box = document.createElement('section');
     box.className = 'attendance-panel attendance-start-panel';
@@ -349,7 +406,12 @@ function renderStartAttendanceControl(root, kind, eventId, eventDate, pageRoot, 
     button.addEventListener('click', async () => {
         button.disabled = true;
         try {
-            await API.setAttendanceSession(kind, eventId, eventDate, true);
+            const rotationCheckbox = pageRoot.querySelector(
+                '.attendance-qr-rotation-panel input[type="checkbox"]'
+            );
+            const qrRotationEnabled = rotationCheckbox ? rotationCheckbox.checked : true;
+            await API.setAttendanceSession(kind, eventId, eventDate, true, qrRotationEnabled);
+            pendingQrRotationEnabled = null;
             startQrSession(pageRoot);
             await refresh(pageRoot);
         } catch (error) {
@@ -713,6 +775,7 @@ async function refresh(root) {
 
     renderEventInfo(left, data.event);
     renderGuestRegistrationControl(left, data, kind, eventId, eventDate, root);
+    renderQrRotationControl(left, data, kind, eventId, eventDate, root);
     renderGeofenceControl(left, data, kind, eventId, eventDate, root);
 
     if (data.event.is_canceled) {
@@ -725,7 +788,14 @@ async function refresh(root) {
     }
 
     if (!data.attendance_session_active) {
-        renderStartAttendanceControl(left, kind, eventId, eventDate, root, data.attendance_session_expired);
+        renderStartAttendanceControl(
+            left,
+            kind,
+            eventId,
+            eventDate,
+            root,
+            data.attendance_session_expired,
+        );
     } else if (qrSessionPaused) {
         renderQrPaused(left, root);
     } else {
