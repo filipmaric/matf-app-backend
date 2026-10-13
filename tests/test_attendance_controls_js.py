@@ -87,6 +87,19 @@ def test_main_page_shows_admin_attendance_navigation_for_admins():
     assert "isAdmin ? 'block' : 'none'" in header_source
 
 
+def test_shared_header_bootstrap_derives_application_prefix():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "static"
+        / "js"
+        / "siteHeaderBootstrap.js"
+    ).read_text(encoding="utf-8")
+
+    assert "new URL(import.meta.url).pathname" in source
+    assert "window.APP_CONFIG" in source
+    assert "modulePath.slice(0, markerIndex)" in source
+
+
 def test_teacher_attendance_polling_only_runs_for_active_sessions():
     source = (
         Path(__file__).resolve().parents[1]
