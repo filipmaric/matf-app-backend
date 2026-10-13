@@ -52,6 +52,11 @@
     </section>
   </main>
 
+  <script>
+    window.APP_CONFIG = {
+        BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
+    };
+  </script>
   <script type="module" src="{{ app_url_for('static', filename='js/siteHeaderBootstrap.js') }}"></script>
 </body>
 </html>

@@ -129,3 +129,9 @@ def test_non_admin_cannot_open_admin_attendance_page(client):
     response = client.get("/admin/attendance")
 
     assert response.status_code == 403
+
+
+def test_anonymous_cannot_open_admin_attendance_page(client):
+    response = client.get("/admin/attendance")
+
+    assert response.status_code == 401
