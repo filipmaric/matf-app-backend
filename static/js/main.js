@@ -154,9 +154,44 @@ const TableManager = {
             this.container.appendChild(h3);
             this.container.appendChild(this.createTable(locationRooms, data));
         }
+
+        this.updateCurrentTimeIndicators(data.date);
+    },
+
+    updateCurrentTimeIndicators(date) {
+        const today = formatLocalDate(new Date());
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const startMinutes = 8 * 60;
+        const endMinutes = 21 * 60;
+        const visible = date === today && currentMinutes >= startMinutes && currentMinutes < endMinutes;
+
+        this.container.querySelectorAll(".current-time-indicator").forEach((indicator) => {
+            indicator.hidden = !visible;
+        });
+
+        if (!visible) return;
+
+        const progress = (currentMinutes - startMinutes) / (endMinutes - startMinutes);
+        this.container.querySelectorAll(".occupancy-table-wrap").forEach((wrapper) => {
+            const table = wrapper.querySelector(".occupancy-table");
+            const firstRow = table?.tBodies[0]?.rows[0];
+            const indicator = wrapper.querySelector(".current-time-indicator");
+            if (!table || !firstRow || !indicator) return;
+
+            const rows = Array.from(table.tBodies[0].rows);
+            const rowPosition = Math.min(rows.length - 1, Math.floor(progress * rows.length));
+            const offset = rows.slice(0, rowPosition)
+                .reduce((sum, row) => sum + row.offsetHeight, 0);
+            const rowProgress = progress * rows.length - rowPosition;
+            indicator.style.top = `${table.offsetTop + table.tHead.offsetHeight + offset + (rows[rowPosition].offsetHeight * rowProgress)}px`;
+        });
     },
 
     createTable(locationRooms, data) {
+        const wrapper = document.createElement("div");
+        wrapper.classList.add("occupancy-table-wrap");
+
         const table = document.createElement("table");
         table.classList.add("occupancy-table");
         table.appendChild(this.createTableHeader(locationRooms));
@@ -180,7 +215,14 @@ const TableManager = {
             tbody.appendChild(tr);
         }
         table.appendChild(tbody);
-        return table;
+
+        const indicator = document.createElement("div");
+        indicator.classList.add("current-time-indicator");
+        indicator.hidden = true;
+        indicator.setAttribute("aria-hidden", "true");
+
+        wrapper.append(table, indicator);
+        return wrapper;
     },
 
     createTableHeader(rooms) {
@@ -238,6 +280,15 @@ const TableManager = {
             onOpenAttendance: (kind, eventId, date) => {
                 const basePath = window.APP_CONFIG?.BASE_PATH || "";
                 window.location.href = `${basePath}/attendance/${kind}/${eventId}/${date}`;
+            },
+            onOpenAttendanceList: (kind, eventId, date) => {
+                const basePath = window.APP_CONFIG?.BASE_PATH || "";
+                const params = new URLSearchParams({
+                    attendance_kind: kind,
+                    attendance_id: String(eventId),
+                    attendance_date: date,
+                });
+                window.location.href = `${basePath}/my_reservations?${params.toString()}`;
             },
             onDelete: async (id) => {
                 await API.deleteReservation(id);
@@ -367,6 +418,7 @@ const DragAndDropManager = {
 
 const App = {
     refreshTimer: null,
+    currentTimeTimer: null,
 
     async init() {
         // Initialize AuthManager with the UI elements
@@ -409,6 +461,9 @@ const App = {
         this.refreshTimer = setInterval(() => {
             this.refresh().catch((err) => console.error("Auto-refresh error:", err));
         }, 5 * 60 * 1000);
+        this.currentTimeTimer = setInterval(() => {
+            TableManager.updateCurrentTimeIndicators(document.getElementById("date-input").value);
+        }, 60 * 1000);
     },
 
     // Load and display data for the selected date
@@ -447,6 +502,9 @@ const App = {
         document.getElementById("date-prev").onclick = () => this.changeDate(-1);
         document.getElementById("date-next").onclick = () => this.changeDate(1);
         document.getElementById("date-input").onchange = () => this.refresh();
+        window.addEventListener("resize", () => {
+            TableManager.updateCurrentTimeIndicators(document.getElementById("date-input").value);
+        });
 
 	// Logout button
         document.getElementById("logout").onclick = () => AuthManager.logout(() => this.refresh());

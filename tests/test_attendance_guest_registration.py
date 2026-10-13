@@ -361,7 +361,7 @@ def test_teacher_can_manually_add_known_student_to_active_session(client, db, mo
 
     assert response.status_code == 201
     assert response.get_json()["student"]["username"] == "manual.student"
-    assert response.get_json()["student"]["registration_source"] == "web"
+    assert response.get_json()["student"]["registration_source"] == "teacher"
     assert client.get(f"/attendance/weekly/{event_id}/{event_date}/data").get_json()["student_count"] == 1
 
 

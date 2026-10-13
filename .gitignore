@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 app.log
+app.db
 data/app.db.bak
 data/app.db
 data/app_backup.db

@@ -15,3 +15,29 @@ export function formatDateDDMMYYYY(isoDate) {
 	const day = parts[2];
 	return `${day}/${month}/${year}`;
 }
+
+export function buildCsvContent(rows) {
+    const escapeCsvValue = (value) => {
+        const text = String(value ?? '');
+        if (/[",\n;]/.test(text)) {
+            return `"${text.replace(/"/g, '""')}"`;
+        }
+        return text;
+    };
+
+    return '\ufeff' + rows
+        .map((row) => row.map(escapeCsvValue).join(';'))
+        .join('\n');
+}
+
+export function downloadTextFile(filename, content, mimeType = 'text/csv;charset=utf-8') {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}

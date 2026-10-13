@@ -203,7 +203,7 @@ CREATE TABLE attendance_records (
     event_id INTEGER NOT NULL,
     event_date TEXT NOT NULL,
     username TEXT NOT NULL,
-    registration_source TEXT NOT NULL DEFAULT 'web' CHECK(registration_source IN ('web', 'android')),
+    registration_source TEXT NOT NULL DEFAULT 'web' CHECK(registration_source IN ('web', 'android', 'teacher')),
     client_ip TEXT,
     geofence_checked INTEGER NOT NULL DEFAULT 0 CHECK(geofence_checked IN (0, 1)),
     failed_attempts_before_success INTEGER NOT NULL DEFAULT 0,

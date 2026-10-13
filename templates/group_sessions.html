@@ -8,12 +8,11 @@
     <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
 </head>
 <body>
-  <main class="page-shell group-sessions-shell">
-    <header class="attendance-page-header">
-      <h1>Часови група</h1>
-      <p><a href="{{ app_url_for('main.index') }}">Назад на распоред</a></p>
-    </header>
+  {% set page_title = 'Часови група' %}
+  {% set active_page = 'group-sessions' %}
+  {% include '_site_header.html' %}
 
+  <main class="page-shell group-sessions-shell">
     <section class="teacher-sessions-toolbar attendance-panel">
       <label for="academic-year-select">Школска година:</label>
       <select id="academic-year-select">
@@ -46,6 +45,7 @@
         BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "")
     };
   </script>
+  <script type="module" src="{{ app_url_for('static', filename='js/siteHeader.js') }}"></script>
   <script type="module" src="{{ app_url_for('static', filename='js/groupSessions.js') }}"></script>
 </body>
 </html>

@@ -155,11 +155,23 @@ The helper script refuses to start unless the required variables are set.
 
 ## Lecture Attendance
 
-The main occupancy table shows a QR action on lecture entries that the logged-in user can manage. That opens an attendance page with:
+The main occupancy table shows a QR action on lecture entries that the logged-in user can manage. Teachers see the action for their own lectures and reservations. Administrators see it for lectures and reservations with recorded attendance. The action opens an attendance page with:
 
 - a QR code for students to scan,
 - a live list of registered students,
+- a historical read-only list after the attendance window has ended,
+- a CSV export of the registered-student list,
 - and a student check-in page that uses a rotating short challenge code.
+
+The same attendance page is used for weekly timetable entries and personal room
+reservations. Access to the roster is checked server-side: the responsible
+teacher or reservation owner may view it, as may an administrator. Attendance
+controls and polling are available only while the class or reservation is
+inside its attendance window.
+
+The occupancy table marks overlapping active timetable entries and reservations
+with a red border and a warning icon. Canceled classes do not count as room
+conflicts.
 
 Operationally, the attendance flow uses:
 

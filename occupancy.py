@@ -182,6 +182,9 @@ def occupancy():
                     continue
 
             room_id = str(r["room_id"])
+            attendance_count = _attendance_count_for_event(
+                "weekly", r["ws_id"], date
+            )
             result.setdefault(room_id, []).append(
                 {
                     "type": "weekly",
@@ -203,6 +206,8 @@ def occupancy():
                             "end_slot": r["end_slot"],
                         }
                     ) and not bool(r["is_canceled"]),
+                    "attendance_count": attendance_count,
+                    "conflict": False,
                 }
             )
 
@@ -213,9 +218,10 @@ def occupancy():
     """
     for r in query_db(q2, (date,)):
         room_id = str(r["room_id"])
+        attendance_count = _attendance_count_for_event("reservation", r["id"], date)
         can_cancel = _can_cancel_reservation_on_date(
             date,
-            _attendance_count_for_event("reservation", r["id"], date),
+            attendance_count,
         )
         result.setdefault(room_id, []).append(
             {
@@ -233,11 +239,21 @@ def occupancy():
                         "end_slot": r["end_slot"],
                     }
                 ),
+                "attendance_count": attendance_count,
                 "can_cancel": can_cancel,
+                "conflict": False,
             }
         )
 
     for k in result:
+        items = result[k]
+        for index, item in enumerate(items):
+            for other in items[index + 1:]:
+                if item.get("canceled", False) or other.get("canceled", False):
+                    continue
+                if item["start"] < other["end"] and other["start"] < item["end"]:
+                    item["conflict"] = True
+                    other["conflict"] = True
         result[k].sort(key=lambda x: x["start"])
 
     return jsonify({"date": date, "kind": kind, "week_day": dow, "rooms": result})

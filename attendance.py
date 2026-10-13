@@ -1685,7 +1685,7 @@ def attendance_student_add(kind, event_id, event_date):
         event_id,
         event_date,
         username,
-        registration_source='web',
+        registration_source='teacher',
         client_ip=request.remote_addr,
         geofence_checked=False,
     )

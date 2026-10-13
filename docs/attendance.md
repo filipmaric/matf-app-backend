@@ -11,7 +11,19 @@ The attendance flow works like this:
 4. The student picks a challenge number that rotates every 10 seconds.
 5. The server validates the student credentials and check-in choice.
 
-The teacher page also shows the current attendance list for that lecture occurrence.
+The teacher page also shows the current attendance list for that lecture
+occurrence. The same page can be opened for a personal room reservation.
+
+When the attendance window has ended, the responsible teacher or reservation
+owner can still open the page to view the historical roster. Administrators can
+open historical rosters for any weekly term or personal reservation with
+recorded attendance. In historical mode, QR/session controls and polling are
+disabled; the roster remains available, including its CSV export.
+
+The occupancy page displays a QR action for an event while attendance is open,
+and keeps it available after the window when students have registered. Active
+overlapping events are marked visually as conflicts. Canceled weekly classes
+are not treated as conflicts.
 
 ## Endpoint Flow
 
@@ -20,6 +32,11 @@ Teacher page:
 ```bash
 GET /attendance/<kind>/<event_id>/<event_date>/data
 ```
+
+`kind` is either `weekly` or `reservation`. The data endpoint returns the
+roster to an authorized teacher, reservation owner, or administrator even when
+`attendance_open` is `false`; student registration endpoints continue to reject
+requests outside the attendance window.
 
 Student QR entry:
 

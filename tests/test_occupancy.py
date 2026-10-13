@@ -76,6 +76,29 @@ def test_occupancy_reservation_with_attendance_cannot_cancel(client, db):
     events = data["rooms"][str(room_id)]
     assert events[0]["can_cancel"] is False
 
+
+def test_occupancy_includes_attendance_count(client, db):
+    room_id = db.room("R1")
+    reservation_id = db.reservation(
+        room_id=room_id,
+        date="2026-06-18",
+        start=10,
+        end=12,
+        description="meeting",
+    )
+    db.execute(
+        """
+        INSERT INTO attendance_records (event_kind, event_id, event_date, username)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("reservation", reservation_id, "2026-06-18", "student1"),
+    )
+
+    response = client.get("/occupancy?date=2026-06-18")
+
+    event = response.get_json()["rooms"][str(room_id)][0]
+    assert event["attendance_count"] == 1
+
 def test_occupancy_missing_date(client):
     r = client.get("/occupancy")
 
@@ -175,6 +198,53 @@ def test_canceled_class(client, db):
 
     assert events[0]["type"] == "weekly"
     assert events[0]["canceled"] is True
+
+
+def test_occupancy_marks_overlapping_items_as_conflicts(client, db):
+    room = db.room("R1")
+    teacher = db.teacher("Prof", "prof")
+    course = db.course("NumericalMethods")
+    semester = db.semester()
+    session = db.course_session(course, teacher, semester)
+    weekly_id = db.weekly_session(
+        session_id=session,
+        room_id=room,
+        day_of_week=1,
+        start_slot=2,
+        end_slot=4,
+    )
+    db.execute(
+        """
+        INSERT INTO weekly_cancellations (weekly_session_id, date, username)
+        VALUES (?, ?, ?)
+        """,
+        (weekly_id, "2026-03-09", "prof"),
+    )
+    db.reservation(
+        room_id=room,
+        date="2026-03-09",
+        start=3,
+        end=5,
+        description="overlap",
+    )
+
+    events = client.get("/occupancy?date=2026-03-09").get_json()["rooms"][str(room)]
+
+    assert len(events) == 1
+    assert events[0]["type"] == "reservation"
+    assert events[0]["conflict"] is False
+
+
+def test_occupancy_marks_overlapping_active_weekly_sessions_as_conflicts(client, db):
+    schedule = db.schedule()
+    schedule.lecture("NumericalMethods", room="R1", day=1, start=2, end=4)
+    schedule.lecture("Databases", teacher="Prof2", room="R1", day=1, start=3, end=5)
+
+    events = client.get("/occupancy?date=2026-03-09").get_json()["rooms"]
+    room_events = events[str(schedule.rooms["R1"])]
+
+    assert len(room_events) == 2
+    assert all(event["conflict"] is True for event in room_events)
 
 
 def test_weekly_session_outside_semester_is_hidden(client, db):

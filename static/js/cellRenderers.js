@@ -66,19 +66,55 @@ function renderCancelBtn(container, cellUsername, ctx, onAction) {
     return null;
 }
 
-function renderAttendanceBtn(ownerUsername, ctx, onAction) {
-    if (!ctx.user || ownerUsername !== ctx.user) {
+function renderConflictIndicator(container) {
+    const indicator = document.createElement("span");
+    indicator.className = "occupancy-conflict-indicator";
+    indicator.textContent = "⚠";
+    indicator.title = "Конфликт у термину";
+    indicator.setAttribute("aria-label", "Конфликт у термину");
+    container.appendChild(indicator);
+}
+
+function renderAttendanceBtn(
+    ownerUsername,
+    ctx,
+    onAction,
+    title = "QR код за присуство",
+    allowAdmin = false,
+) {
+    if (!ctx.user || (ownerUsername !== ctx.user && !(allowAdmin && ctx.isAdmin))) {
         return null;
     }
     const btn = document.createElement("button");
     btn.className = "attendance-btn";
-    btn.textContent = "▣";
-    btn.title = "QR код за присуство";
+    btn.innerHTML = `
+        <svg class="attendance-qr-icon" viewBox="0 0 21 21" aria-hidden="true" focusable="false">
+            <path d="M1 1h7v7H1zM3 3v3h3V3zM13 1h7v7h-7zM15 3v3h3V3zM1 13h7v7H1zM3 15v3h3v-3zM11 11h3v3h-3zM16 11h2v2h-2zM14 15h3v2h-3zM18 15h2v5h-2zM11 17h2v3h-2zM15 18h2v2h-2zM9 9h2v2H9zM11 15h2v2h-2zM9 13h2v2H9z" />
+        </svg>
+    `;
+    btn.title = title;
     btn.onclick = (e) => {
         e.stopPropagation();
         onAction();
     };
     return btn;
+}
+
+function appendAttendanceBtn(container, ownerUsername, ctx, kind, eventId, date, attendanceOpen, attendanceCount) {
+    if (!attendanceOpen && !(attendanceCount > 0)) {
+        return;
+    }
+
+    const attendanceBtn = renderAttendanceBtn(
+        ownerUsername,
+        ctx,
+        () => ctx.onOpenAttendance(kind, eventId, date),
+        attendanceOpen ? "QR код за присуство" : "Погледај пријављене студенте",
+        attendanceCount > 0,
+    );
+    if (attendanceBtn) {
+        container.appendChild(attendanceBtn);
+    }
 }
 
 // Object that contains functions for creating the content of different cell types
@@ -96,20 +132,27 @@ export const CellRenderers = {
 
         const { topBar, left, right } = createCalendarTopBar();
 
+        if (cellData.conflict) {
+            td.classList.add("occupancy-conflict");
+            renderConflictIndicator(left);
+        }
+
         // cancel button (if the user has permissions and the reservation is still cancelable)
         if (cellData.can_cancel !== false) {
             renderCancelBtn(left, cellData.username, ctx, () => ctx.onDelete(cellData.id));
         }
 
-        // QR attendance button only during the class
-        if (cellData.attendance_open !== false) {
-            const attendanceBtn = renderAttendanceBtn(cellData.username, ctx, () =>
-                ctx.onOpenAttendance("reservation", cellData.id, date)
-            );
-            if (attendanceBtn) {
-                right.appendChild(attendanceBtn);
-            }
-        }
+        // Keep the QR/list button after the attendance window if students registered.
+        appendAttendanceBtn(
+            right,
+            cellData.username,
+            ctx,
+            "reservation",
+            cellData.id,
+            date,
+            cellData.attendance_open !== false,
+            cellData.attendance_count,
+        );
 
         // dugme za integraciju sa kalendarima
         const calMenu = renderCalendarMenu(cellData, date);
@@ -144,12 +187,30 @@ export const CellRenderers = {
         // The top bar contains controls - cancel button, calendar
         const { topBar, left, right } = createCalendarTopBar();
 
+        if (cellData.conflict) {
+            td.classList.add("occupancy-conflict");
+            renderConflictIndicator(left);
+        }
+
         // cancel/restore class button
         const btn = renderCancelBtn(left, cellData.teacher_username, ctx, () => 
             ctx.onToggleWeekly(cellData.weekly_session_id, date)
         );
 
-        // calendar integration (only if the class is not canceled)
+        // Keep the attendance button available after the attendance window if
+        // students registered, including for canceled classes.
+        appendAttendanceBtn(
+            right,
+            cellData.teacher_username,
+            ctx,
+            "weekly",
+            cellData.weekly_session_id,
+            date,
+            cellData.attendance_open !== false,
+            cellData.attendance_count,
+        );
+
+        // Calendar integration is available only if the class is not canceled.
         if (!cellData.canceled) {
             // Map the weekly data into the format expected by renderCalendarMenu
             const calData = {
@@ -160,26 +221,8 @@ export const CellRenderers = {
                 start: cellData.start,
                 end: cellData.end
             };
-            if (cellData.attendance_open !== false) {
-                const attendanceBtn = renderAttendanceBtn(cellData.teacher_username, ctx, () =>
-                    ctx.onOpenAttendance("weekly", cellData.weekly_session_id, date)
-                );
-                if (attendanceBtn) {
-                    right.appendChild(attendanceBtn);
-                }
-            }
             const calMenu = renderCalendarMenu(calData, date);
             right.appendChild(calMenu);
-        }
-        else {
-            if (cellData.attendance_open !== false) {
-                const attendanceBtn = renderAttendanceBtn(cellData.teacher_username, ctx, () =>
-                    ctx.onOpenAttendance("weekly", cellData.weekly_session_id, date)
-                );
-                if (attendanceBtn) {
-                    right.appendChild(attendanceBtn);
-                }
-            }
         }
 
         // cell content

@@ -22,8 +22,16 @@ the displayed reservations. Opening a course's attendance section calls
 `GET /my_course_attendance_data?course_id=...`; that response contains only
 the selected course's held dates and `attendance_counts` keyed by date.
 The detailed student list for one reservation or one weekly term is fetched
-only when that specific row is expanded. The optional summary action requests
+only when that specific row is expanded. Clicking a personal reservation or
+weekly attendance entry opens the shared attendance page for that event. This
+also supports historical rosters after the attendance window has ended. The
+optional summary action requests
 a server-side aggregate and does not download the full roster for every date.
+
+The detailed roster page provides a small CSV export control. Its export is
+disabled when the roster is empty. Access to the detailed roster is enforced by
+the attendance endpoint for the responsible teacher, reservation owner, or an
+administrator.
 
 ## Access Notes
 

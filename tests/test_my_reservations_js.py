@@ -85,6 +85,17 @@ def test_personal_attendance_loads_counts_before_term_details():
     assert "kind: 'reservation'" in personal_loader
 
 
+def test_personal_reservation_rows_open_the_timetable():
+    source = script_text()
+    personal_renderer = function_body(source, "renderPersonalReservations")
+
+    assert "tr.className = 'reservation-link-row'" in personal_renderer
+    assert "tr.addEventListener('click'" in personal_renderer
+    assert "tr.addEventListener('keydown'" in personal_renderer
+    assert "event.key !== 'Enter' && event.key !== ' '" in personal_renderer
+    assert "window.location.href = timetableUrl" in personal_renderer
+
+
 def test_term_attendance_can_add_a_student_after_the_term():
     source = script_text()
     term_loader = function_body(source, "createLazyAttendanceTerm")
@@ -138,6 +149,18 @@ def test_weekly_attendance_loads_roster_only_for_expanded_term():
     assert "studentCount" in term_loader
 
 
+def test_attendance_focus_opens_the_requested_event_from_timetable():
+    source = script_text()
+
+    assert "attendance_kind" in source
+    assert "attendance_id" in source
+    assert "attendance_date" in source
+    assert "function isAttendanceFocus" in source
+    assert "details.open = true" in source
+    assert "renderPersonalAttendanceByTerm(reservations, focus = null)" in source
+    assert "renderCourseAttendance(course, focus = null)" in source
+
+
 def test_attendance_rosters_allow_teachers_to_delete_a_student():
     source = script_text()
 
@@ -155,7 +178,7 @@ def test_attendance_download_is_added_only_after_students_are_loaded():
     assert "function createAttendanceDownloadButton(date, students)" in source
     assert "createAttendanceDownloadButton(reservation.date, students)" in source
     assert "createAttendanceDownloadButton(date, students)" in source
-    assert "Преузми CSV" in source
+    assert "attendance-csv-link attendance-dialog-download" in source
     assert "link.href = '#'" in source
     assert "event.preventDefault()" in source
 

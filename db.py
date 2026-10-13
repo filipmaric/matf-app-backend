@@ -59,7 +59,7 @@ def _ensure_attendance_schema(conn):
             event_id INTEGER NOT NULL,
             event_date TEXT NOT NULL,
             username TEXT NOT NULL,
-            registration_source TEXT NOT NULL DEFAULT 'web' CHECK(registration_source IN ('web', 'android')),
+            registration_source TEXT NOT NULL DEFAULT 'web' CHECK(registration_source IN ('web', 'android', 'teacher')),
             client_ip TEXT,
             geofence_checked INTEGER NOT NULL DEFAULT 0 CHECK(geofence_checked IN (0,1)),
             failed_attempts_before_success INTEGER NOT NULL DEFAULT 0,
@@ -127,7 +127,7 @@ def _ensure_attendance_schema(conn):
         """
     )
     session_columns = {
-        row["name"]
+        row[1]
         for row in conn.execute("PRAGMA table_info(attendance_session_settings)").fetchall()
     }
     if "qr_rotation_enabled" not in session_columns:
@@ -138,6 +138,60 @@ def _ensure_attendance_schema(conn):
             CHECK(qr_rotation_enabled IN (0,1))
             """
         )
+
+    attendance_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attendance_records'"
+    ).fetchone()[0] or ""
+    if "teacher" not in attendance_sql.lower():
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DROP INDEX IF EXISTS idx_attendance_records_event")
+        conn.execute("DROP INDEX IF EXISTS idx_attendance_records_username_event")
+        conn.execute("ALTER TABLE attendance_records RENAME TO attendance_records_legacy")
+        conn.execute(
+            """
+            CREATE TABLE attendance_records (
+                id INTEGER PRIMARY KEY,
+                event_kind TEXT NOT NULL CHECK(event_kind IN ('weekly', 'reservation')),
+                event_id INTEGER NOT NULL,
+                event_date TEXT NOT NULL,
+                username TEXT NOT NULL,
+                registration_source TEXT NOT NULL DEFAULT 'web'
+                    CHECK(registration_source IN ('web', 'android', 'teacher')),
+                client_ip TEXT,
+                geofence_checked INTEGER NOT NULL DEFAULT 0 CHECK(geofence_checked IN (0,1)),
+                failed_attempts_before_success INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(event_kind, event_id, event_date, username)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO attendance_records
+                (id, event_kind, event_id, event_date, username,
+                 registration_source, client_ip, geofence_checked,
+                 failed_attempts_before_success, created_at)
+            SELECT id, event_kind, event_id, event_date, username,
+                   registration_source, client_ip, geofence_checked,
+                   failed_attempts_before_success, created_at
+            FROM attendance_records_legacy
+            """
+        )
+        conn.execute("DROP TABLE attendance_records_legacy")
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_attendance_records_event
+            ON attendance_records(event_kind, event_id, event_date)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_attendance_records_username_event
+            ON attendance_records(username, event_kind, event_id, event_date)
+        """
+    )
     conn.commit()
 
 

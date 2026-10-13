@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Filip Marić. See LICENCE. */
 import { API } from './api.js';
 import { qrCodeDataUrl } from './vendor/qrcode.js';
-import { formatDateDDMMYYYY } from './util.js';
+import { buildCsvContent, downloadTextFile, formatDateDDMMYYYY } from './util.js';
 
 let pollHandle = null;
 let activeSpotCheck = null;
@@ -41,7 +41,8 @@ function formatStudentLabel(student) {
 
 function formatAttendanceSource(student) {
     const source = String(student?.registration_source || '').toLowerCase();
-    return source === 'android' ? 'android' : 'web';
+    if (source === 'android' || source === 'teacher') return source;
+    return 'web';
 }
 
 function handleAttendanceError(err) {
@@ -233,7 +234,7 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
     }
 
     const box = document.createElement('section');
-    box.className = 'attendance-panel attendance-geofence-panel';
+    box.className = 'attendance-panel attendance-option-panel attendance-geofence-panel';
 
     if (!data.attendance_geofence_available) {
         const warning = document.createElement('p');
@@ -269,6 +270,11 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
     controls.appendChild(status);
     box.appendChild(controls);
 
+    const help = document.createElement('p');
+    help.className = 'attendance-option-help';
+    help.textContent = 'Када је укључено, регистрација је могућа само из зграде факултета.';
+    box.appendChild(help);
+
     checkbox.addEventListener('change', async () => {
         checkbox.disabled = true;
         try {
@@ -287,7 +293,7 @@ function renderGeofenceControl(root, data, kind, eventId, eventDate, pageRoot) {
 
 function renderGuestRegistrationControl(root, data, kind, eventId, eventDate, pageRoot) {
     const box = document.createElement('section');
-    box.className = 'attendance-panel attendance-guest-registration-panel';
+    box.className = 'attendance-panel attendance-option-panel attendance-guest-registration-panel';
 
     const label = document.createElement('label');
     label.className = 'attendance-geofence-toggle';
@@ -346,7 +352,7 @@ function renderGuestRegistrationControl(root, data, kind, eventId, eventDate, pa
 
 function renderQrRotationControl(root, data, kind, eventId, eventDate, pageRoot) {
     const box = document.createElement('section');
-    box.className = 'attendance-panel attendance-qr-rotation-panel';
+    box.className = 'attendance-panel attendance-option-panel attendance-qr-rotation-panel';
 
     const label = document.createElement('label');
     label.className = 'attendance-geofence-toggle';
@@ -447,13 +453,48 @@ function renderStopAttendanceControl(root, kind, eventId, eventDate, pageRoot) {
     root.appendChild(box);
 }
 
+function attendanceRosterCsv(students) {
+    const rows = [
+        ['Име и презиме', 'Индекс', 'Корисничко име', 'Извор', 'Време пријаве', 'IP адреса'],
+        ...students.map((student) => [
+            student.student_name || student.student_label || 'Непознато',
+            student.student_index || '',
+            student.username || '',
+            formatAttendanceSource(student),
+            student.created_at || '',
+            student.client_ip || '',
+        ]),
+    ];
+    return buildCsvContent(rows);
+}
+
+function downloadAttendanceRosterCsv(students) {
+    downloadTextFile('prijavljeni-studenti.csv', attendanceRosterCsv(students));
+}
+
 function renderRoster(root, students, kind, eventId, eventDate, pageRoot, sessionActive) {
     const section = document.createElement('section');
     section.className = 'attendance-roster';
 
+    const heading = document.createElement('div');
+    heading.className = 'attendance-roster-heading';
+
     const title = document.createElement('h3');
     title.textContent = 'Пријављени студенти';
-    section.appendChild(title);
+    heading.appendChild(title);
+
+    const csvLink = document.createElement('button');
+    csvLink.type = 'button';
+    csvLink.className = 'attendance-csv-link';
+    csvLink.disabled = !students.length;
+    csvLink.textContent = 'CSV';
+    csvLink.title = 'Извези списак у CSV';
+    csvLink.setAttribute('aria-label', 'Извези списак пријављених студената у CSV');
+    csvLink.addEventListener('click', (event) => {
+        downloadAttendanceRosterCsv(students);
+    });
+    heading.appendChild(csvLink);
+    section.appendChild(heading);
 
     if (sessionActive) {
         const form = document.createElement('form');
@@ -730,10 +771,7 @@ function openSpotCheckDialog(root, kind, eventId, eventDate, event, students) {
 }
 
 function showAccessMessage(root, messageText) {
-    if (pollHandle) {
-        clearInterval(pollHandle);
-        pollHandle = null;
-    }
+    stopAttendancePolling();
     clearQrSessionTimer();
     qrSessionPaused = false;
     root.innerHTML = '';
@@ -749,6 +787,30 @@ function showAccessMessage(root, messageText) {
     panel.appendChild(note);
 
     root.appendChild(panel);
+}
+
+function stopAttendancePolling() {
+    if (!pollHandle) return;
+    clearInterval(pollHandle);
+    pollHandle = null;
+}
+
+function startAttendancePolling(root) {
+    if (pollHandle) return;
+    pollHandle = setInterval(async () => {
+        if (pollInFlight) return;
+        pollInFlight = true;
+        try {
+            await refresh(root);
+        } catch (err) {
+            const result = handleAttendanceError(err);
+            if (result.handled && (result.type === 'outside_class' || result.type === 'canceled')) {
+                showAccessMessage(root, result.message);
+            }
+        } finally {
+            pollInFlight = false;
+        }
+    }, 2000);
 }
 
 async function refresh(root) {
@@ -774,6 +836,21 @@ async function refresh(root) {
     const { left, right } = ensureTeacherLayout(root);
 
     renderEventInfo(left, data.event);
+    const historyView = Boolean(data.can_view && !data.attendance_open);
+    if (historyView) {
+        stopAttendancePolling();
+        renderRoster(
+            right,
+            data.students || [],
+            kind,
+            eventId,
+            eventDate,
+            root,
+            false,
+        );
+        return data;
+    }
+
     renderGuestRegistrationControl(left, data, kind, eventId, eventDate, root);
     renderQrRotationControl(left, data, kind, eventId, eventDate, root);
     renderGeofenceControl(left, data, kind, eventId, eventDate, root);
@@ -788,6 +865,7 @@ async function refresh(root) {
     }
 
     if (!data.attendance_session_active) {
+        stopAttendancePolling();
         renderStartAttendanceControl(
             left,
             kind,
@@ -805,6 +883,7 @@ async function refresh(root) {
     }
     if (data.attendance_session_active) {
         renderStopAttendanceControl(left, kind, eventId, eventDate, root);
+        startAttendancePolling(root);
     }
     renderRoster(
         right,
@@ -869,23 +948,7 @@ const App = {
         const root = document.getElementById('attendance-root');
         try {
             const data = await refresh(root);
-            if (data.attendance_session_active) {
-                startQrSession(root);
-            }
-            pollHandle = setInterval(async () => {
-                if (pollInFlight) return;
-                pollInFlight = true;
-                try {
-                    await refresh(root);
-                } catch (err) {
-                    const result = handleAttendanceError(err);
-                    if (result.handled && (result.type === 'outside_class' || result.type === 'canceled')) {
-                        showAccessMessage(root, result.message);
-                    }
-                } finally {
-                    pollInFlight = false;
-                }
-            }, 2000);
+            if (data.attendance_session_active) startQrSession(root);
         } catch (err) {
             const result = handleAttendanceError(err);
             if (err.status === 403 && result.handled && result.type === 'outside_class') {

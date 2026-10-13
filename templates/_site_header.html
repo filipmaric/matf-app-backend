@@ -2,9 +2,6 @@
 <header class="site-header">
   <div class="site-header-top">
     <div class="site-brand">
-      {% if active_page != 'home' %}
-        <a href="{{ app_url_for('main.index') }}">Резервације учионица</a>
-      {% endif %}
       {% if page_title %}<h1>{{ page_title }}</h1>{% endif %}
     </div>
 
@@ -22,6 +19,9 @@
   </div>
 
   <nav class="main-navigation" aria-label="Главна навигација">
+    <p>
+      <a class="{% if active_page == 'home' %}active{% endif %}" href="{{ app_url_for('main.index') }}">Резервације учионица</a>
+    </p>
     <p id="my-reservations-wrap" style="display:none">
       <a class="{% if active_page == 'reservations' %}active{% endif %}" href="{{ app_url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
     </p>
