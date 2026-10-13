@@ -25,6 +25,11 @@ and keeps it available after the window when students have registered. Active
 overlapping events are marked visually as conflicts. Canceled weekly classes
 are not treated as conflicts.
 
+Administrators can use `/admin/attendance` to list all weekly terms and
+personal reservations that have recorded attendance. The page is available
+only to users in the `administrators` table and links each row to the shared
+attendance roster page.
+
 ## Endpoint Flow
 
 Teacher page:

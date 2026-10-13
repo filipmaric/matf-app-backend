@@ -9,7 +9,7 @@ import random
 import secrets
 
 from flask import Blueprint, abort, current_app, jsonify, make_response, redirect, render_template, request, url_for
-from flask_login import current_user
+from flask_login import current_user, login_required
 from config import (
     ATTENDANCE_CHALLENGE_TTL,
     ATTENDANCE_CLASS_GRACE_MINUTES,
@@ -1237,6 +1237,60 @@ def attendance_make_guest_device_response(response):
 # These endpoints serve the teacher attendance page, the student join flow,
 # the live challenge payload, the teacher current attendance list, and the
 # final student check-in submission.
+
+
+@bp.route('/admin/attendance')
+@login_required
+def attendance_admin_view():
+    """Render all event occurrences that have at least one attendance record."""
+    if not check_if_admin(current_user.username):
+        abort(403)
+
+    events = query_db(
+        """
+        SELECT 'weekly' AS event_kind,
+               ar.event_id,
+               ar.event_date,
+               c.name AS title,
+               t.name AS responsible,
+               rm.name AS room_name,
+               ws.start_slot,
+               ws.end_slot,
+               COUNT(*) AS attendance_count
+        FROM attendance_records ar
+        JOIN weekly_sessions ws ON ws.id = ar.event_id
+        JOIN course_sessions cs ON cs.id = ws.session_id
+        JOIN courses c ON c.id = cs.course_id
+        JOIN teachers t ON t.id = cs.teacher_id
+        JOIN rooms rm ON rm.id = ws.room_id
+        WHERE ar.event_kind = 'weekly'
+        GROUP BY ar.event_id, ar.event_date, c.name, t.name,
+                 rm.name, ws.start_slot, ws.end_slot
+
+        UNION ALL
+
+        SELECT 'reservation' AS event_kind,
+               ar.event_id,
+               ar.event_date,
+               r.description AS title,
+               r.username AS responsible,
+               rm.name AS room_name,
+               r.start_slot,
+               r.end_slot,
+               COUNT(*) AS attendance_count
+        FROM attendance_records ar
+        JOIN reservations r ON r.id = ar.event_id
+        JOIN rooms rm ON rm.id = r.room_id
+        WHERE ar.event_kind = 'reservation'
+        GROUP BY ar.event_id, ar.event_date, r.description, r.username,
+                 rm.name, r.start_slot, r.end_slot
+        ORDER BY event_date DESC, start_slot DESC, event_kind, event_id
+        """
+    )
+    return render_template(
+        'attendance_admin.html',
+        attendance_events=[dict(event) for event in events],
+    )
 
 
 @bp.route('/attendance/<kind>/<int:event_id>/<event_date>')

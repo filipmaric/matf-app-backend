@@ -216,6 +216,88 @@ def test_import_timetable_replaces_existing_schedule(tmp_path):
     assert row["room_code"] == "407"
 
 
+def test_import_timetable_keeps_weekly_id_for_existing_session(tmp_path):
+    db_path = tmp_path / "timetable.db"
+    timetable = tmp_path / "timetable.txt"
+
+    init_timetable_db(db_path)
+    seed_timetable_entities(
+        db_path,
+        teachers=[("profuser", "Prof Full Name")],
+        courses=[("MAT1", "Mathematics 1", 1)],
+        groups=["3A"],
+    )
+    seed_timetable_sessions(
+        db_path,
+        sessions=[("profuser", "MAT1", 1, "p", ["3A"])],
+    )
+
+    write_timetable(timetable, "profuser_3A_MAT1.p_pon_8_9_406\n")
+    run_script(["scripts/import/import_timetable.py", str(db_path), str(timetable)])
+    original_id = fetch_one(db_path, "SELECT id FROM weekly_sessions")["id"]
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO attendance_records (event_kind, event_id, event_date, username)
+            VALUES ('weekly', ?, '2026-10-12', 'student1')
+            """,
+            (original_id,),
+        )
+
+    write_timetable(timetable, "profuser_3A_MAT1.p_pon_8_9_407\n")
+    run_script(["scripts/import/import_timetable.py", str(db_path), str(timetable)])
+
+    updated_id = fetch_one(db_path, "SELECT id FROM weekly_sessions")["id"]
+    assert updated_id == original_id
+    assert fetch_one(
+        db_path,
+        "SELECT event_id FROM attendance_records WHERE event_kind = 'weekly'",
+    )["event_id"] == original_id
+
+
+def test_import_timetable_does_not_reuse_attended_id_for_other_session(tmp_path):
+    db_path = tmp_path / "timetable.db"
+    timetable = tmp_path / "timetable.txt"
+
+    init_timetable_db(db_path)
+    seed_timetable_entities(
+        db_path,
+        teachers=[("profuser", "Prof Full Name")],
+        courses=[("MAT1", "Mathematics 1", 1), ("ALG1", "Algebra 1", 1)],
+        groups=["3A"],
+    )
+    seed_timetable_sessions(
+        db_path,
+        sessions=[
+            ("profuser", "MAT1", 1, "p", ["3A"]),
+            ("profuser", "ALG1", 1, "p", ["3A"]),
+        ],
+    )
+
+    write_timetable(timetable, "profuser_3A_MAT1.p_pon_8_9_406\n")
+    run_script(["scripts/import/import_timetable.py", str(db_path), str(timetable)])
+    attended_id = fetch_one(db_path, "SELECT id FROM weekly_sessions")["id"]
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO attendance_records (event_kind, event_id, event_date, username)
+            VALUES ('weekly', ?, '2026-10-12', 'student1')
+            """,
+            (attended_id,),
+        )
+
+    write_timetable(timetable, "profuser_3A_ALG1.p_uto_10_11_407\n")
+    run_script(["scripts/import/import_timetable.py", str(db_path), str(timetable)])
+
+    new_id = fetch_one(db_path, "SELECT id FROM weekly_sessions")["id"]
+    assert new_id > attended_id
+    assert fetch_one(
+        db_path,
+        "SELECT event_id FROM attendance_records WHERE event_kind = 'weekly'",
+    )["event_id"] == attended_id
+
+
 def test_import_timetable_accepts_teacher_office_room(tmp_path):
     db_path = tmp_path / "timetable.db"
     timetable = tmp_path / "timetable.txt"

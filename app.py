@@ -88,6 +88,7 @@ Route overview:
   - `/attendance/<kind>/<id>/<date>/join` (POST): submits an attendance join attempt.
   - `/attendance/<kind>/<id>/<date>/spot_check` (POST): submits a spot-check attempt.
   - `/attendance/review-demo`: renders the review attendance demo page.
+  - `/admin/attendance`: lists all events with recorded attendance for administrators.
 
 
 - Other:

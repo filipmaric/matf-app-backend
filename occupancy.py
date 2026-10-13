@@ -245,15 +245,16 @@ def occupancy():
             }
         )
 
-    for k in result:
-        items = result[k]
-        for index, item in enumerate(items):
-            for other in items[index + 1:]:
-                if item.get("canceled", False) or other.get("canceled", False):
-                    continue
-                if item["start"] < other["end"] and other["start"] < item["end"]:
-                    item["conflict"] = True
-                    other["conflict"] = True
+    if datetime.date.fromisoformat(date) >= datetime.date.today():
+        for k in result:
+            items = result[k]
+            for index, item in enumerate(items):
+                for other in items[index + 1:]:
+                    if item.get("canceled", False) or other.get("canceled", False):
+                        continue
+                    if item["start"] < other["end"] and other["start"] < item["end"]:
+                        item["conflict"] = True
+                        other["conflict"] = True
         result[k].sort(key=lambda x: x["start"])
 
     return jsonify({"date": date, "kind": kind, "week_day": dow, "rooms": result})

@@ -1,0 +1,57 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>Присуство</title>
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
+</head>
+<body>
+  {% set page_title = 'Присуство' %}
+  {% set active_page = 'admin-attendance' %}
+  {% include '_site_header.html' %}
+
+  <main class="page-shell admin-attendance-shell">
+    <section class="attendance-panel">
+      <h2>Термини са регистрованим присуством</h2>
+      {% if attendance_events %}
+        <div class="admin-attendance-table-wrap">
+          <table class="admin-attendance-table">
+            <thead>
+              <tr>
+                <th>Датум</th>
+                <th>Термин</th>
+                <th>Наставник / власник</th>
+                <th>Сала</th>
+                <th>Време</th>
+                <th>Пријављени</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in attendance_events %}
+                <tr>
+                  <td>{{ event.event_date }}</td>
+                  <td>{{ event.title }}</td>
+                  <td>{{ event.responsible }}</td>
+                  <td>{{ event.room_name }}</td>
+                  <td>{{ '%02d:00 - %02d:00'|format(event.start_slot, event.end_slot) }}</td>
+                  <td>{{ event.attendance_count }}</td>
+                  <td>
+                    <a class="attendance-summary-btn" href="{{ app_url_for('attendance.attendance_view', kind=event.event_kind, event_id=event.event_id, event_date=event.event_date) }}">Списак</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p>Нема термина са регистрованим присуством.</p>
+      {% endif %}
+    </section>
+  </main>
+
+  <script type="module" src="{{ app_url_for('static', filename='js/siteHeaderBootstrap.js') }}"></script>
+</body>
+</html>

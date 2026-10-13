@@ -173,6 +173,10 @@ The occupancy table marks overlapping active timetable entries and reservations
 with a red border and a warning icon. Canceled classes do not count as room
 conflicts.
 
+Administrators also have a `Присуство` page in the main navigation at
+`/admin/attendance`. It lists every weekly term and personal reservation that
+has at least one attendance record, with a direct link to the detailed roster.
+
 Operationally, the attendance flow uses:
 
 - a QR link that rotates every 8 seconds,
@@ -335,6 +339,13 @@ The timetable synchronizer only attaches weekly slots to course sessions that al
 When a unique existing course session has all timetable groups plus additional
 groups with no enrolled students, the timetable row is attached to that
 session as well.
+The importer preserves the `weekly_sessions.id` of an existing course session
+and meeting number when the schedule is refreshed. New timetable rows receive
+IDs above both the current timetable and historical weekly attendance IDs.
+This is important because attendance records refer to weekly sessions by ID;
+reusing an old ID for another class could display a roster under the wrong
+lecture. Existing weekly rows are removed only after all imported rows have
+been written.
 
 ## Calendar Import
 

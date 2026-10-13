@@ -924,6 +924,32 @@ body {
     width: 100%;
 }
 
+.admin-attendance-shell {
+    max-width: 1200px;
+}
+
+.admin-attendance-table-wrap {
+    overflow-x: auto;
+}
+
+.admin-attendance-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 14px;
+}
+
+.admin-attendance-table th,
+.admin-attendance-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #ddd;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.admin-attendance-table th {
+    background: #f4f4f4;
+}
+
 .attendance-page-header {
     text-align: center;
     margin-bottom: 8px;

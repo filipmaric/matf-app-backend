@@ -51,16 +51,35 @@ def normalize_course_type(
     return normalized
 
 
-def clear_semester_schedule(cur: sqlite3.Cursor, semester_id: int) -> None:
-    cur.execute(
+def existing_weekly_sessions(
+    cur: sqlite3.Cursor, semester_id: int
+) -> dict[tuple[int, int], int]:
+    """Return current weekly-session ids keyed by course session and meeting."""
+    rows = cur.execute(
         """
-        DELETE FROM weekly_sessions
-        WHERE session_id IN (
-            SELECT id FROM course_sessions WHERE semester_id = ?
-        )
+        SELECT ws.id, ws.session_id, ws.meeting_no
+        FROM weekly_sessions ws
+        JOIN course_sessions cs ON cs.id = ws.session_id
+        WHERE cs.semester_id = ?
         """,
         (semester_id,),
-    )
+    ).fetchall()
+    return {(int(row["session_id"]), int(row["meeting_no"])): int(row["id"]) for row in rows}
+
+
+def next_weekly_session_id(cur: sqlite3.Cursor) -> int:
+    """Allocate an id above both live and historical attendance event ids."""
+    weekly_id = cur.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM weekly_sessions"
+    ).fetchone()[0]
+    attendance_id = cur.execute(
+        """
+        SELECT COALESCE(MAX(event_id), 0)
+        FROM attendance_records
+        WHERE event_kind = 'weekly'
+        """
+    ).fetchone()[0]
+    return max(int(weekly_id), int(attendance_id)) + 1
 
 
 def resolve_semester_id(cur: sqlite3.Cursor, semester_label: str | None) -> int:
@@ -191,6 +210,7 @@ def insert_weekly_session(
     semester_id: int,
     meeting_no: int,
     create_missing: bool = False,
+    weekly_session_id: int | None = None,
 ) -> tuple[int, bool]:
     (
         teacher_username,
@@ -211,20 +231,55 @@ def insert_weekly_session(
         create_missing=create_missing,
     )
 
-    cur.execute(
-        """
-        INSERT INTO weekly_sessions
-            (session_id, meeting_no, room_id, day_of_week, start_slot, end_slot)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (session_id, meeting_no, room_id, day_of_week, start_slot, end_slot),
-    )
+    existing_row = None
+    if weekly_session_id is not None:
+        existing_row = cur.execute(
+            "SELECT 1 FROM weekly_sessions WHERE id = ?",
+            (weekly_session_id,),
+        ).fetchone()
+
+    if weekly_session_id is None or existing_row is None:
+        cur.execute(
+            """
+            INSERT INTO weekly_sessions
+                (id, session_id, meeting_no, room_id, day_of_week, start_slot, end_slot)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                weekly_session_id,
+                session_id,
+                meeting_no,
+                room_id,
+                day_of_week,
+                start_slot,
+                end_slot,
+            ),
+        )
+        weekly_session_id = int(weekly_session_id or cur.lastrowid)
+    else:
+        cur.execute(
+            """
+            UPDATE weekly_sessions
+            SET session_id = ?, meeting_no = ?, room_id = ?, day_of_week = ?,
+                start_slot = ?, end_slot = ?
+            WHERE id = ?
+            """,
+            (
+                session_id,
+                meeting_no,
+                room_id,
+                day_of_week,
+                start_slot,
+                end_slot,
+                weekly_session_id,
+            ),
+        )
     if created:
         cur.execute(
             "UPDATE course_sessions SET weekly_lessons = ? WHERE id = ?",
             (meeting_no, session_id),
         )
-    return session_id, created
+    return weekly_session_id, created
 
 
 def main(argv=None):
@@ -261,8 +316,11 @@ def main(argv=None):
         mydb.ensure_timetable_revision_schema(conn)
         with conn:
             cur = conn.cursor()
+            cur.execute("PRAGMA foreign_keys = ON")
             semester_id = resolve_semester_id(cur, args.semester)
-            clear_semester_schedule(cur, semester_id)
+            existing_sessions = existing_weekly_sessions(cur, semester_id)
+            retained_ids: set[int] = set()
+            next_id = next_weekly_session_id(cur)
 
             with source_path.open("r", encoding="utf-8") as handle:
                 for index, line in enumerate(handle, start=1):
@@ -297,20 +355,42 @@ def main(argv=None):
                     meeting_no = meeting_counts.get(session_key, 0) + 1
 
                     try:
-                        _session_id, created = insert_weekly_session(
+                        resolved_session_id, created_session = resolve_session_id(
+                            cur,
+                            parsed,
+                            semester_id,
+                            create_missing=args.create_missing_sessions,
+                        )
+                        weekly_session_key = (resolved_session_id, meeting_no)
+                        weekly_session_id = existing_sessions.get(weekly_session_key)
+                        if weekly_session_id is None:
+                            weekly_session_id = next_id
+                            next_id += 1
+                        weekly_session_id, created = insert_weekly_session(
                             cur,
                             parsed,
                             semester_id,
                             meeting_no,
                             create_missing=args.create_missing_sessions,
+                            weekly_session_id=weekly_session_id,
                         )
+                        if created_session:
+                            cur.execute(
+                                "UPDATE course_sessions SET weekly_lessons = ? WHERE id = ?",
+                                (meeting_no, resolved_session_id),
+                            )
                     except ValueError as exc:
                         skipped_rows += 1
                         print(f"SKIP\trow={index}\treason={exc}")
                         continue
 
                     meeting_counts[session_key] = meeting_no
+                    retained_ids.add(weekly_session_id)
                     imported_rows += 1
+
+            stale_ids = set(existing_sessions.values()) - retained_ids
+            for stale_id in stale_ids:
+                cur.execute("DELETE FROM weekly_sessions WHERE id = ?", (stale_id,))
 
         print(
             f"Synchronized timetable for semester {args.semester or '(latest)'} "

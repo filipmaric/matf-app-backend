@@ -2,6 +2,7 @@
 import { API } from './api.js';
 import { CellRenderers, attachDragSensor } from './cellRenderers.js';
 import { createMouseIntervalSelector } from './calendarInteraction.js';
+import { AuthManager, initializeSiteHeader } from './siteHeader.js';
 import { formatDateDDMMYYYY } from './util.js';
 
 function formatLocalDate(date) {
@@ -15,87 +16,7 @@ function formatLocalDate(date) {
 ////////////////////////////////////////////////////////////////////////////////
 // Session data and login/logout UI elements
 ////////////////////////////////////////////////////////////////////////////////
-const AuthManager = {
-    username: "",
-    isAdmin: false,
-    elements: {}, // UI element references
-
-    init(elements) {
-        this.elements = elements;
-        if (this.elements.loginForm) {
-            this.elements.loginForm.setAttribute("autocomplete", "off");
-            this.elements.loginForm.setAttribute("autocapitalize", "off");
-            this.elements.loginForm.setAttribute("autocorrect", "off");
-        }
-        if (this.elements.usernameInput) {
-            this.elements.usernameInput.setAttribute("autocomplete", "off");
-            this.elements.usernameInput.setAttribute("autocapitalize", "off");
-            this.elements.usernameInput.setAttribute("autocorrect", "off");
-            this.elements.usernameInput.setAttribute("spellcheck", "false");
-        }
-        if (this.elements.passwordInput) {
-            this.elements.passwordInput.setAttribute("autocomplete", "new-password");
-            this.elements.passwordInput.setAttribute("autocapitalize", "off");
-            this.elements.passwordInput.setAttribute("autocorrect", "off");
-            this.elements.passwordInput.setAttribute("spellcheck", "false");
-        }
-    },
-
-    async updateUI() {
-        try {
-            const data = await API.me();
-            if (data.logged_in) {
-                this.username = data.username;
-                this.isAdmin = await API.isAdmin(this.username);
-                this.elements.loginForm.style.display = "none";
-                this.elements.loginInfo.textContent = this.username;
-                this.elements.logoutForm.style.display = "flex";
-                this.elements.myReservationsWrap.style.display = "block";
-                this.elements.oralExamsWrap.style.display = "block";
-            } else {
-                this.reset();
-            }
-        } catch (err) {
-            console.error("Auth error:", err);
-            this.reset();
-        }
-    },
-
-    reset() {
-        this.username = "";
-        this.isAdmin = false;
-        this.elements.loginForm.style.display = "block";
-        this.elements.logoutForm.style.display = "none";
-        this.elements.loginInfo.textContent = "";
-        this.elements.myReservationsWrap.style.display = "none";
-        this.elements.oralExamsWrap.style.display = "none";
-    },
-
-    async login(username, password, onSuccess) {
-        try {
-            await API.login(username, password);
-            await this.updateUI();
-            if (onSuccess) onSuccess(); // callback
-        } catch (err) {
-            alert(err.data?.error || 'Пријава на систем није успела.');
-        }
-    },
-
-    async logout(onSuccess) {
-        try {
-            await API.logout();
-            this.reset();
-            if (onSuccess) onSuccess(); // callback
-        } catch (err) {
-            alert(err.data?.error || 'Одјава није успела.');
-        }
-    },
-
-    isLoggedIn() {
-        return !!this.username;
-    }
-};
-
+// Authentication and shared header rendering live in siteHeader.js.
 ////////////////////////////////////////////////////////////////////////////////
 // Reservation table view
 ////////////////////////////////////////////////////////////////////////////////
@@ -421,19 +342,11 @@ const App = {
     currentTimeTimer: null,
 
     async init() {
-        // Initialize AuthManager with the UI elements
-        AuthManager.init({
-            loginForm: document.getElementById("login-form"),
-            usernameInput: document.getElementById("username"),
-            passwordInput: document.getElementById("password"),
-            loginInfo: document.getElementById("login-info"),
-            logoutForm: document.getElementById("logout-form"),
-            myReservationsWrap: document.getElementById("my-reservations-wrap"),
-            oralExamsWrap: document.getElementById("oral-exams-wrap")
+	// Initialize the shared header and refresh the timetable after auth changes.
+        await initializeSiteHeader({
+            onLogin: () => this.refresh(),
+            onLogout: () => this.refresh(),
         });
-
-	// Show the appropriate login/logout elements
-        await AuthManager.updateUI();
 
 	// Set today's date
         const dateInput = document.getElementById("date-input");
@@ -506,17 +419,6 @@ const App = {
             TableManager.updateCurrentTimeIndicators(document.getElementById("date-input").value);
         });
 
-	// Logout button
-        document.getElementById("logout").onclick = () => AuthManager.logout(() => this.refresh());
-
-	// Login form
-        document.getElementById("login-form").onsubmit = async (e) => {
-            e.preventDefault();
-            const u = document.getElementById("username").value;
-            const p = document.getElementById("password").value;
-            await AuthManager.login(u, p, () => this.refresh());
-            e.target.reset();
-        };
     },
 
     // Move the date by the given number of days, positive or negative

@@ -28,5 +28,8 @@
     <p id="oral-exams-wrap" style="display:none">
       <a class="{% if active_page == 'oral-exams' %}active{% endif %}" href="{{ app_url_for('oral_exam_views.oral_exams_view') }}">Усмени испити</a>
     </p>
+    <p id="admin-attendance-wrap" style="display:none">
+      <a class="{% if active_page == 'admin-attendance' %}active{% endif %}" href="{{ app_url_for('attendance.attendance_admin_view') }}">Присуство</a>
+    </p>
   </nav>
 </header>

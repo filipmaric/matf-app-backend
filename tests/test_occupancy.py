@@ -237,6 +237,23 @@ def test_occupancy_marks_overlapping_items_as_conflicts(client, db):
 
 def test_occupancy_marks_overlapping_active_weekly_sessions_as_conflicts(client, db):
     schedule = db.schedule()
+    future_date = date.today() + timedelta(days=1)
+    db.execute(
+        "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+        (future_date.isoformat(), "teaching", future_date.weekday()),
+    )
+    schedule.lecture("NumericalMethods", room="R1", day=future_date.weekday(), start=2, end=4)
+    schedule.lecture("Databases", teacher="Prof2", room="R1", day=future_date.weekday(), start=3, end=5)
+
+    events = client.get(f"/occupancy?date={future_date.isoformat()}").get_json()["rooms"]
+    room_events = events[str(schedule.rooms["R1"])]
+
+    assert len(room_events) == 2
+    assert all(event["conflict"] is True for event in room_events)
+
+
+def test_occupancy_does_not_mark_past_conflicts(client, db):
+    schedule = db.schedule()
     schedule.lecture("NumericalMethods", room="R1", day=1, start=2, end=4)
     schedule.lecture("Databases", teacher="Prof2", room="R1", day=1, start=3, end=5)
 
@@ -244,7 +261,7 @@ def test_occupancy_marks_overlapping_active_weekly_sessions_as_conflicts(client,
     room_events = events[str(schedule.rooms["R1"])]
 
     assert len(room_events) == 2
-    assert all(event["conflict"] is True for event in room_events)
+    assert all(event["conflict"] is False for event in room_events)
 
 
 def test_weekly_session_outside_semester_is_hidden(client, db):

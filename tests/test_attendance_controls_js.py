@@ -72,6 +72,21 @@ def test_expired_attendance_links_to_my_reservations():
     assert "${basePath}/my_reservations?${params.toString()}" in source
 
 
+def test_main_page_shows_admin_attendance_navigation_for_admins():
+    source = MAIN_SCRIPT.read_text(encoding="utf-8")
+    header_source = (
+        Path(__file__).resolve().parents[1]
+        / "static"
+        / "js"
+        / "siteHeader.js"
+    ).read_text(encoding="utf-8")
+
+    assert "initializeSiteHeader" in source
+    assert "onLogin: () => this.refresh()" in source
+    assert "adminAttendance" in header_source
+    assert "isAdmin ? 'block' : 'none'" in header_source
+
+
 def test_teacher_attendance_polling_only_runs_for_active_sessions():
     source = (
         Path(__file__).resolve().parents[1]
