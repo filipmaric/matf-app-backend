@@ -104,6 +104,23 @@ def test_occupancy_missing_date(client):
 
     assert r.status_code == 400
 
+
+def test_occupancy_empty_colloquium_day_returns_empty_rooms(client, db):
+    db.execute(
+        "INSERT INTO days (date, kind, week_day) VALUES (?, ?, ?)",
+        ("2026-11-24", "colloquium", -1),
+    )
+
+    response = client.get("/occupancy?date=2026-11-24")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "date": "2026-11-24",
+        "kind": "colloquium",
+        "week_day": 1,
+        "rooms": {},
+    }
+
 def test_weekly_session(client, db):
     room = db.room("R1")
     teacher = db.teacher("Prof", "prof")
