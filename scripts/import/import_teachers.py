@@ -46,13 +46,37 @@ def resolve_username(email: str) -> str | None:
 
 
 def load_source_rows(csv_path: Path) -> tuple[list[dict[str, str]], list[str], int]:
-    with csv_path.open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.reader(handle, delimiter="\t", quotechar='"')
-        rows = [
-            [normalize_text(cell) for cell in row]
-            for row in reader
-            if any(normalize_text(cell) for cell in row)
-        ]
+    source_text = csv_path.read_text(encoding="utf-8-sig")
+    first_line = next(
+        (line for line in source_text.splitlines() if normalize_text(line)),
+        "",
+    )
+    first_fields = [normalize_header(cell) for cell in csv.reader([first_line]).__next__()]
+    delimiter = "," if {"username", "name"}.issubset(first_fields) else "\t"
+    reader = csv.reader(source_text.splitlines(), delimiter=delimiter, quotechar='"')
+    rows = [
+        [normalize_text(cell) for cell in row]
+        for row in reader
+        if any(normalize_text(cell) for cell in row)
+    ]
+
+    for index, row in enumerate(rows):
+        normalized = [normalize_header(cell) for cell in row]
+        if {"username", "name"}.issubset(set(normalized)):
+            index_by_header = {header: idx for idx, header in enumerate(normalized)}
+            records = []
+            for source_row in rows[index + 1 :]:
+                records.append(
+                    {
+                        "username": source_row[index_by_header["username"]]
+                        if len(source_row) > index_by_header["username"]
+                        else "",
+                        "name": source_row[index_by_header["name"]]
+                        if len(source_row) > index_by_header["name"]
+                        else "",
+                    }
+                )
+            return records, normalized, index + 2
 
     header_index = None
     headers: list[str] = []
@@ -99,6 +123,22 @@ def plan_import(
     seen_usernames: set[str] = set()
 
     for row_number, record in enumerate(records, start=1):
+        direct_username = normalize_text(record.get("username")).casefold()
+        if direct_username:
+            display_name = normalize_text(record.get("name")) or direct_username
+            if direct_username in seen_usernames:
+                duplicates.append(
+                    (row_number, direct_username, display_name, "duplicate username in CSV")
+                )
+                continue
+            seen_usernames.add(direct_username)
+            if direct_username in existing:
+                skipped.append((row_number, direct_username, "teacher already exists"))
+                continue
+            planned.append((display_name, direct_username))
+            existing[direct_username] = display_name
+            continue
+
         first_name = normalize_text(record.get("first_name"))
         last_name = normalize_text(record.get("last_name"))
         email = normalize_text(record.get("email"))
