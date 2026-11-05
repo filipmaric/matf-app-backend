@@ -33,6 +33,15 @@ def test_rooms_include_display_metadata(client, db):
     assert response.get_json()[0]["display_order"] == 3
 
 
+def test_rooms_include_building_priority(client, db):
+    db.building_location("A", 44.0, 20.0)
+    db.room(name="R1", building_name="A")
+
+    response = client.get("/rooms")
+
+    assert response.get_json()[0]["building_priority"] == 100
+
+
 def test_teacher_office_rooms_are_hidden_from_reservation_rooms(client, db):
     db.room(name="Teacher office", type="teacher_office")
     db.room(name="R1", type="lecture")

@@ -26,10 +26,12 @@ def list_rooms():
         return limited
 
     query = """
-        SELECT id, name, capacity, type, building_name AS location, priority,
-               floor_wing, display_order
-        FROM rooms
-        WHERE (type IS NULL OR type != ?)
+        SELECT r.id, r.name, r.capacity, r.type, r.building_name AS location,
+               r.priority, r.floor_wing, r.display_order,
+               bl.priority AS building_priority
+        FROM rooms r
+        LEFT JOIN building_locations bl ON bl.building_name = r.building_name
+        WHERE (r.type IS NULL OR r.type != ?)
     """
     params = [TEACHER_OFFICE_ROOM_TYPE]
 
@@ -49,6 +51,7 @@ def list_rooms():
             "priority": r["priority"],
             "floor_wing": r["floor_wing"],
             "display_order": r["display_order"],
+            "building_priority": r["building_priority"],
         }
         for r in rows
     ]

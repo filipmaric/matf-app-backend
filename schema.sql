@@ -186,7 +186,8 @@ CREATE TABLE building_locations (
     building_name TEXT PRIMARY KEY,
     latitude REAL NOT NULL,
     longitude REAL NOT NULL,
-    radius_m REAL NOT NULL CHECK(radius_m > 0)
+    radius_m REAL NOT NULL CHECK(radius_m > 0),
+    priority INTEGER NOT NULL DEFAULT 100
 );
 
 CREATE TABLE weekly_cancellations (

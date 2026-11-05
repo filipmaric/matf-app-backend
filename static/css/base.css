@@ -22,6 +22,7 @@ body {
 .live-occupancy-intro, .live-controls, .live-building { background: #fff; border: 1px solid #d9d9d9; border-radius: 6px; }
 .live-occupancy-intro { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 28px 32px; }
 .eyebrow, .building-kicker { color: #2563eb; font-size: .75rem; font-weight: 800; letter-spacing: .12em; margin: 0 0 8px; }
+.building-kicker { font-size: 1rem; }
 .live-occupancy-intro h2 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.4rem); letter-spacing: -.04em; }
 .live-occupancy-intro h2, .building-heading h3 { color: #333; }
 #live-subtitle { color: #555; margin: 10px 0 0; }
@@ -44,7 +45,7 @@ body {
 .room-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; padding: 16px 28px 16px 14px; }
 .room-card { min-height: 100px; padding: 12px; border: 1px solid; border-radius: 14px; box-sizing: border-box; }
 .room-free { background: #f5f5f5; border-color: #d7d7d7; }
-.room-busy { background: #dbeafe; border-color: #93c5fd; }
+.room-busy { background: #dbeafe; border-color: #d7d7d7; }
 .room-card-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 5px 8px; }
 .room-name { min-width: 0; font-size: 1.2rem; font-weight: 800; overflow-wrap: anywhere; }
 .room-badge { min-width: 0; max-width: 100%; font-size: .62rem; font-weight: 800; letter-spacing: .06em; line-height: 1.15; text-align: right; overflow-wrap: anywhere; }

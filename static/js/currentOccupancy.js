@@ -14,6 +14,7 @@ let occupancy = null;
 let buildings = [];
 let rotationIndex = 0;
 let rotationTimer = null;
+let hourlyRefreshTimer = null;
 
 const localDate = (date = new Date()) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 const displayDate = (date) => new Intl.DateTimeFormat("sr-Latn-RS", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
@@ -77,7 +78,7 @@ function render() {
     });
     const occupied = busyRooms.filter(({ event }) => event).length;
     const free = busyRooms.length - occupied;
-    const slotLabel = `${String(hour).padStart(2, "0")}:00–${String(hour + 1).padStart(2, "0")}:00`;
+    const slotLabel = `${String(hour).padStart(2, "0")}.00-${String(hour + 1).padStart(2, "0")}.00`;
 
     subtitle.textContent = `${slotLabel} · ${occupied} заузето · ${free} слободно`;
     rotationStatus.textContent = buildingSelect.value ? "Фиксиран приказ" : `Аутоматска смена · ${selected}`;
@@ -95,7 +96,7 @@ function render() {
         group.items.push(item);
     }
     buildingView.innerHTML = `
-      <div class="building-heading"><div><span class="building-kicker">ЗАУЗЕЋЕ УЧИОНИЦА</span><h3>${escapeHtml(selected)}</h3></div><div class="building-count"><strong>${free}</strong><span>слободно од ${busyRooms.length}</span></div></div>
+      <div class="building-heading"><div><span class="building-kicker">ЗАУЗЕЋЕ УЧИОНИЦА · ${escapeHtml(slotLabel)}</span><h3>${escapeHtml(selected)}</h3></div><div class="building-count"><strong>${free}</strong><span>слободно од ${busyRooms.length}</span></div></div>
       ${groups.map((group) => `<section class="room-group"><h4>${escapeHtml(group.label)}</h4><div class="room-grid">${group.items.map(({ room, event }) => roomCard(room, event)).join("")}</div></section>`).join("")}`;
 }
 
@@ -110,7 +111,16 @@ function roomCard(room, event) {
 }
 
 function setupBuildings() {
-    buildings = [...new Set(rooms.map(buildingName))].sort((a, b) => a.localeCompare(b, "sr"));
+    const priorities = new Map();
+    for (const room of rooms) {
+        const name = buildingName(room);
+        const priority = room.building_priority ?? 999;
+        if (!priorities.has(name) || priority < priorities.get(name)) priorities.set(name, priority);
+    }
+    buildings = [...new Set(rooms.map(buildingName))].sort((a, b) => {
+        const priorityDifference = (priorities.get(a) ?? 999) - (priorities.get(b) ?? 999);
+        return priorityDifference || a.localeCompare(b, "sr");
+    });
     const requested = new URLSearchParams(location.search).get("building");
     for (const name of buildings) {
         const option = document.createElement("option"); option.value = name; option.textContent = name; buildingSelect.appendChild(option);
@@ -139,9 +149,20 @@ async function refresh() {
     }
 }
 
+function scheduleHourlyRefresh() {
+    clearTimeout(hourlyRefreshTimer);
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setHours(now.getHours() + 1, 0, 0, 1000);
+    hourlyRefreshTimer = setTimeout(async () => {
+        await refresh();
+        scheduleHourlyRefresh();
+    }, Math.max(1000, nextHour.getTime() - now.getTime()));
+}
+
 updateClock();
 fullscreenToggle.addEventListener("click", () => toggleFullscreen().catch((error) => console.error("Fullscreen failed", error)));
 document.addEventListener("fullscreenchange", () => setFullscreenState(Boolean(document.fullscreenElement)));
 setInterval(updateClock, 30000);
-setInterval(refresh, 10000);
+scheduleHourlyRefresh();
 refresh();

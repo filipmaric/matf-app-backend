@@ -20,6 +20,8 @@ Each room returned by `GET /rooms` also contains optional display metadata:
 - `floor_wing`: label used to group rooms in the live display, for example `I sprat - sever`;
 - `display_order`: numeric order within that group.
 
+Building rotation uses `building_locations.priority`; lower values are shown first.
+
 ## Examples
 
 Fetch all rooms:
