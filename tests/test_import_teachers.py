@@ -121,3 +121,40 @@ def test_import_teachers_imports_matf_email_rows_and_skips_others(tmp_path):
         "Милица Петровић",
         "Стара Наставница",
     ]
+
+
+def test_import_teachers_accepts_export_format_and_keeps_existing(tmp_path):
+    db_path = tmp_path / "teachers.db"
+    csv_path = tmp_path / "teachers.csv"
+    init_db(db_path)
+    csv_path.write_text(
+        "username,name\n"
+        "stara.nastavnica,Ново Име\n"
+        "nova.nastavnica,Нова Наставница\n",
+        encoding="utf-8",
+    )
+
+    result = run_script(
+        "--csv",
+        str(csv_path),
+        "--database",
+        str(db_path),
+        "--schema",
+        str(REPO_ROOT / "schema.sql"),
+    )
+
+    assert "Imported 1 teachers" in result.stdout
+    assert "teacher already exists" in result.stdout
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT name, username FROM teachers ORDER BY username"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert rows == [
+        ("Нова Наставница", "nova.nastavnica"),
+        ("Стара Наставница", "stara.nastavnica"),
+    ]
