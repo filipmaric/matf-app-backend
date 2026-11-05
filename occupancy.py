@@ -26,7 +26,8 @@ def list_rooms():
         return limited
 
     query = """
-        SELECT id, name, capacity, type, building_name AS location, priority
+        SELECT id, name, capacity, type, building_name AS location, priority,
+               floor_wing, display_order
         FROM rooms
         WHERE (type IS NULL OR type != ?)
     """
@@ -46,6 +47,8 @@ def list_rooms():
             "type": r["type"],
             "location": r["location"],
             "priority": r["priority"],
+            "floor_wing": r["floor_wing"],
+            "display_order": r["display_order"],
         }
         for r in rows
     ]

@@ -18,6 +18,16 @@ def test_index_template(client):
     assert "Моје резервације" in r.get_data(as_text=True)
 
 
+def test_current_occupancy_template(client):
+    r = client.get("/current-occupancy")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Заузеће учионица сада" in body
+    assert "currentOccupancy.js" in body
+    assert "Све зграде — ротирај на 10 секунди" in body
+    assert 'id="fullscreen-toggle"' in body
+
+
 def test_index_template_prefixes_personal_reservations_link_for_subpath_deployment(client, app, monkeypatch):
     monkeypatch.setitem(app.config, "APPLICATION_ROOT", "/matf-app")
 

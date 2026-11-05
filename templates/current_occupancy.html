@@ -1,0 +1,46 @@
+<!-- Copyright (c) 2026 Filip Marić. See LICENCE. -->
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Заузеће учионица сада</title>
+    <link rel="stylesheet" href="{{ app_url_for('static', filename='css/base.css') }}">
+</head>
+<body class="live-occupancy-page">
+  <main class="page-shell live-occupancy-shell">
+    {% set page_title = 'Заузеће учионица сада' %}
+    {% set active_page = 'current-occupancy' %}
+    {% include '_site_header.html' %}
+
+    <section class="live-occupancy-intro" aria-labelledby="live-title">
+      <div>
+        <p class="eyebrow">Уживо · освежава се аутоматски</p>
+        <h2 id="live-title">Која учионица је слободна?</h2>
+        <p id="live-subtitle">Учитавање тренутног распореда…</p>
+      </div>
+      <div class="live-clock" aria-live="polite">
+        <span id="live-time">--:--</span>
+        <small id="live-date">--</small>
+      </div>
+      <button id="fullscreen-toggle" class="fullscreen-toggle" type="button" aria-pressed="false">⛶ Цео екран</button>
+    </section>
+
+    <section class="live-controls" aria-label="Филтер зграде">
+      <label for="building-select">Зграда</label>
+      <select id="building-select">
+        <option value="">Све зграде — ротирај на 10 секунди</option>
+      </select>
+      <span id="rotation-status" class="rotation-status" role="status"></span>
+    </section>
+
+    <div id="live-state" class="live-state" role="status" aria-live="polite">Учитавање…</div>
+    <section id="live-building" class="live-building" aria-live="polite"></section>
+  </main>
+  <script>
+    window.APP_CONFIG = { BASE_PATH: "{{ config['APPLICATION_ROOT'] }}".replace(/\/$/, "") };
+  </script>
+  <script type="module" src="{{ app_url_for('static', filename='js/currentOccupancy.js') }}"></script>
+</body>
+</html>

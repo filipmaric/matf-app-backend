@@ -13,6 +13,12 @@ def index():
     return render_template("index.html")
 
 
+@bp.route("/current-occupancy")
+def current_occupancy():
+    """Render the live, one-building-at-a-time occupancy display."""
+    return render_template("current_occupancy.html")
+
+
 @bp.route("/healthz")
 def healthz():
     """Expose a lightweight health check for the web frontend."""

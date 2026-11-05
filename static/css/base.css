@@ -15,6 +15,66 @@ body {
     gap: 18px;
 }
 
+/* Live occupancy display. */
+.live-occupancy-page { background: #f4f4f4; color: #333; scrollbar-width: none; }
+.live-occupancy-page::-webkit-scrollbar { display: none; }
+.live-occupancy-shell { width: min(100%, 1600px); max-width: none; margin: 0 auto; }
+.live-occupancy-intro, .live-controls, .live-building { background: #fff; border: 1px solid #d9d9d9; border-radius: 6px; }
+.live-occupancy-intro { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 28px 32px; }
+.eyebrow, .building-kicker { color: #2563eb; font-size: .75rem; font-weight: 800; letter-spacing: .12em; margin: 0 0 8px; }
+.live-occupancy-intro h2 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.4rem); letter-spacing: -.04em; }
+.live-occupancy-intro h2, .building-heading h3 { color: #333; }
+#live-subtitle { color: #555; margin: 10px 0 0; }
+.live-clock { text-align: right; min-width: 130px; }
+.live-clock span { display: block; color: #2563eb; font-size: 2.2rem; font-weight: 800; letter-spacing: -.06em; }
+.live-clock small { color: #666; }
+.live-controls { display: flex; align-items: center; gap: 14px; padding: 14px 18px; }
+.live-controls label { font-weight: 700; }
+#building-select { border: 1px solid #c9c9c9; border-radius: 4px; padding: 10px 38px 10px 12px; color: #222; background: #f4f4f4; font: inherit; }
+.rotation-status { margin-left: auto; color: #666; font-size: .9rem; }
+.live-state { min-height: 22px; color: #555; padding: 0 4px; }
+.live-building { overflow: hidden; }
+.building-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 24px 28px 18px; border-bottom: 1px solid #e5e5e5; }
+.building-heading h3 { margin: 0; font-size: 1.8rem; letter-spacing: -.04em; }
+.building-count { display: flex; align-items: baseline; gap: 8px; color: #666; }
+.building-count strong { color: #2563eb; font-size: 2.2rem; }
+.room-group { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: start; border-top: 1px solid #eee; }
+.room-group:first-of-type { border-top: 0; }
+.room-group > h4 { margin: 22px 0 0 28px; color: #555; font-size: .82rem; line-height: 1.25; letter-spacing: .06em; text-transform: uppercase; }
+.room-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; padding: 16px 28px 16px 14px; }
+.room-card { min-height: 100px; padding: 12px; border: 1px solid; border-radius: 14px; box-sizing: border-box; }
+.room-free { background: #f5f5f5; border-color: #d7d7d7; }
+.room-busy { background: #dbeafe; border-color: #93c5fd; }
+.room-card-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 5px 8px; }
+.room-name { min-width: 0; font-size: 1.2rem; font-weight: 800; overflow-wrap: anywhere; }
+.room-badge { min-width: 0; max-width: 100%; font-size: .62rem; font-weight: 800; letter-spacing: .06em; line-height: 1.15; text-align: right; overflow-wrap: anywhere; }
+.room-free .room-badge { color: #555; } .room-busy .room-badge { color: #1d4ed8; }
+.room-card h4 { margin: 11px 0 3px; font-size: 1rem; line-height: 1.2; }
+.room-card p { margin: 11px 0 0; color: #666; font-size: .88rem; }
+.room-busy p { margin-top: 5px; }
+.fullscreen-toggle { align-self: flex-start; border: 1px solid #c9c9c9; border-radius: 4px; padding: 10px 13px; background: #f1f1f1; color: #222; font: inherit; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.fullscreen-toggle:hover, .fullscreen-toggle:focus-visible { background: #e8e8e8; border-color: #2563eb; }
+.live-fullscreen { background: #1f2937; margin: 0; overflow-y: auto; }
+.live-fullscreen .live-occupancy-shell { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: none; min-height: 100vh; margin: 0; padding: 22px 30px; box-sizing: border-box; }
+.live-fullscreen .site-header, .live-fullscreen .live-controls, .live-fullscreen .live-state, .live-fullscreen .live-occupancy-intro > div:first-child, .live-fullscreen .fullscreen-toggle { display: none; }
+.live-fullscreen .live-occupancy-intro { justify-content: flex-end; width: min(100%, 1500px); padding: 0 8px 14px; border: 0; background: transparent; }
+.live-fullscreen .live-clock { color: #fff; }
+.live-fullscreen .live-clock span { color: #bfdbfe; font-size: clamp(2.2rem, 5vw, 4rem); }
+.live-fullscreen .live-clock small { color: #d1d5db; font-size: 1rem; }
+.live-fullscreen .live-building { border: 0; border-radius: 18px; background: transparent; width: min(100%, 1500px); align-self: center; }
+.live-fullscreen .building-heading { padding: 18px 8px; border-color: #4b5563; }
+.live-fullscreen .building-kicker { color: #93c5fd; }
+.live-fullscreen .building-heading h3, .live-fullscreen .building-count strong { color: #fff; }
+.live-fullscreen .building-count { color: #d1d5db; }
+.live-fullscreen .room-grid { padding: 22px 8px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.live-fullscreen .room-group { grid-template-columns: 175px minmax(0, 1fr); border-color: #374151; }
+.live-fullscreen .room-group > h4 { margin: 20px 0 0 8px; color: #bfdbfe; }
+.live-fullscreen .room-card { min-height: 108px; padding: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.18); }
+@media (max-width: 1250px) { body:not(.live-fullscreen) .room-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 1020px) { body:not(.live-fullscreen) .room-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { body:not(.live-fullscreen) .room-grid { grid-template-columns: 1fr; } .live-fullscreen .live-occupancy-shell { padding: 14px; } .room-group, .live-fullscreen .room-group { grid-template-columns: 1fr; } .room-group > h4, .live-fullscreen .room-group > h4 { margin: 14px 18px 0; } .room-grid, .live-fullscreen .room-grid { padding: 12px 18px 16px; } }
+@media (max-width: 640px) { .live-occupancy-intro { align-items: flex-start; padding: 22px; } .live-controls { align-items: flex-start; flex-direction: column; } .rotation-status { margin-left: 0; } .building-heading, .room-grid { padding-left: 18px; padding-right: 18px; } }
+
 .page-shell.main-page-shell {
     width: auto;
 }

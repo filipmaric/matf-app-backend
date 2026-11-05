@@ -22,6 +22,9 @@
     <p>
       <a class="{% if active_page == 'home' %}active{% endif %}" href="{{ app_url_for('main.index') }}">Резервације учионица</a>
     </p>
+    <p>
+      <a class="{% if active_page == 'current-occupancy' %}active{% endif %}" href="{{ app_url_for('main.current_occupancy') }}">Заузеће сада</a>
+    </p>
     <p id="my-reservations-wrap" style="display:none">
       <a class="{% if active_page == 'reservations' %}active{% endif %}" href="{{ app_url_for('reservations_views.my_reservations_view') }}">Моје резервације</a>
     </p>

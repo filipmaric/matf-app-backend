@@ -15,6 +15,11 @@ It exposes:
 - Both endpoints are rate limited to reduce scraping and query bursts.
 - `GET /rooms` and `GET /occupancy` use separate limits.
 
+Each room returned by `GET /rooms` also contains optional display metadata:
+
+- `floor_wing`: label used to group rooms in the live display, for example `I sprat - sever`;
+- `display_order`: numeric order within that group.
+
 ## Examples
 
 Fetch all rooms:

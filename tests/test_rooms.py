@@ -24,6 +24,15 @@ def test_rooms_filter(client, db):
     assert data[0]["name"] == "Lab1"
 
 
+def test_rooms_include_display_metadata(client, db):
+    db.room(name="R1", floor_wing="I sprat - sever", display_order=3)
+
+    response = client.get("/rooms")
+
+    assert response.get_json()[0]["floor_wing"] == "I sprat - sever"
+    assert response.get_json()[0]["display_order"] == 3
+
+
 def test_teacher_office_rooms_are_hidden_from_reservation_rooms(client, db):
     db.room(name="Teacher office", type="teacher_office")
     db.room(name="R1", type="lecture")

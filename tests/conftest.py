@@ -84,13 +84,14 @@ class TestDB:
         with self.app.app_context():
             return myapp.execute_db(query, args)
 
-    def room(self, name="R1", capacity=50, type="lecture", building_name="A", location=None, priority=1):
+    def room(self, name="R1", capacity=50, type="lecture", building_name="A", location=None, priority=1, floor_wing=None, display_order=None):
         if location is not None:
             building_name = location
         return self.execute(
-            """INSERT INTO rooms (name, capacity, type, building_name, priority)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, capacity, type, building_name, priority),
+            """INSERT INTO rooms
+               (name, capacity, type, building_name, priority, floor_wing, display_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (name, capacity, type, building_name, priority, floor_wing, display_order),
         )
 
     def building_location(self, building_name, latitude, longitude, radius_m=100):

@@ -177,7 +177,9 @@ CREATE TABLE rooms (
     type TEXT,
     building_name TEXT NOT NULL,
     code TEXT UNIQUE,
-    priority INTEGER DEFAULT (100)
+    priority INTEGER DEFAULT (100),
+    floor_wing TEXT,
+    display_order INTEGER
 );
 
 CREATE TABLE building_locations (
