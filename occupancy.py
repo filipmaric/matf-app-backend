@@ -214,6 +214,7 @@ def occupancy():
                     ) and not bool(r["is_canceled"]),
                     "attendance_count": attendance_count,
                     "conflict": False,
+                    "conflict_details": [],
                 }
             )
 
@@ -248,6 +249,7 @@ def occupancy():
                 "attendance_count": attendance_count,
                 "can_cancel": can_cancel,
                 "conflict": False,
+                "conflict_details": [],
             }
         )
 
@@ -260,6 +262,23 @@ def occupancy():
                     if item["start"] < other["end"] and other["start"] < item["end"]:
                         item["conflict"] = True
                         other["conflict"] = True
+                        item["conflict_details"].append(_conflict_details(other))
+                        other["conflict_details"].append(_conflict_details(item))
             items.sort(key=lambda x: x["start"])
 
     return jsonify({"date": date, "kind": kind, "week_day": dow, "rooms": result})
+
+
+def _conflict_details(item):
+    """Return the public event fields needed to explain an occupancy conflict."""
+    if item["type"] == "weekly":
+        return {
+            "type": "weekly", "start": item["start"], "end": item["end"],
+            "lecture_name": item["lecture_name"], "teacher": item["teacher"],
+            "groups": item["groups"],
+        }
+    return {
+        "type": "reservation", "id": item["id"],
+        "start": item["start"], "end": item["end"],
+        "description": item["description"], "username": item["username"],
+    }

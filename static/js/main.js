@@ -166,7 +166,15 @@ const TableManager = {
 
     createTd(room_id, hour, data, prevCells) {
         const roomItems = data.rooms[room_id] || [];
-        const cellData = roomItems.find(item => item.start <= hour && hour < item.end);
+        // A regular scheduled class is the primary display when it overlaps
+        // a custom reservation. The reservation remains available through
+        // the conflict indicator/details on the displayed class.
+        const cellData = roomItems
+            .filter(item => item.start <= hour && hour < item.end)
+            .sort((a, b) => {
+                const regularClassPriority = (item) => item.type === 'weekly' ? 0 : 1;
+                return regularClassPriority(a) - regularClassPriority(b) || a.start - b.start;
+            })[0];
 
         let contentKey = '';
 	if (!cellData) {

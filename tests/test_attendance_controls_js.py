@@ -44,6 +44,22 @@ def test_occupancy_conflicts_are_visually_marked():
     assert "table.occupancy-table td.occupancy-conflict" in css_source
 
 
+def test_regular_class_has_display_priority_over_custom_reservation():
+    source = MAIN_SCRIPT.read_text(encoding="utf-8")
+
+    assert "filter(item => item.start <= hour && hour < item.end)" in source
+    assert "item.type === 'weekly' ? 0 : 1" in source
+
+
+def test_conflict_details_merge_adjacent_parts_of_same_reservation():
+    source = CELL_RENDERERS.read_text(encoding="utf-8")
+
+    assert "function mergeConflictDetails(details)" in source
+    assert "detail.description === previous.description" in source
+    assert "detail.username === previous.username" in source
+    assert "previous.end === detail.start" in source
+
+
 def test_admin_can_open_weekly_attendance_roster():
     source = CELL_RENDERERS.read_text(encoding="utf-8")
     teacher_source = (

@@ -267,6 +267,15 @@ def test_occupancy_marks_overlapping_active_weekly_sessions_as_conflicts(client,
 
     assert len(room_events) == 2
     assert all(event["conflict"] is True for event in room_events)
+    assert room_events[0]["conflict_details"] == [{
+        "type": "weekly",
+        "start": 3,
+        "end": 5,
+        "lecture_name": "Databases",
+        "teacher": "Prof2",
+        "groups": [],
+    }]
+    assert room_events[1]["conflict_details"][0]["lecture_name"] == "NumericalMethods"
 
 
 def test_occupancy_does_not_mark_past_conflicts(client, db):

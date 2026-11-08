@@ -1858,6 +1858,30 @@ table.occupancy-table td.occupancy-conflict {
     font-size: 1rem;
     font-weight: 700;
     line-height: 1;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.occupancy-conflict-dialog {
+    width: min(34rem, calc(100vw - 2rem));
+    border: 0;
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.3);
+}
+
+.occupancy-conflict-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.occupancy-conflict-dialog li {
+    margin: 0.5rem 0;
+}
+
+.occupancy-conflict-dialog-close {
+    margin-top: 0.75rem;
 }
 
 .weekly-canceled.occupancy-conflict {

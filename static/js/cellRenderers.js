@@ -66,12 +66,78 @@ function renderCancelBtn(container, cellUsername, ctx, onAction) {
     return null;
 }
 
-function renderConflictIndicator(container) {
-    const indicator = document.createElement("span");
+function formatConflictEvent(detail) {
+    const time = `${detail.start}:00–${detail.end}:00`;
+    if (detail.type === "weekly") {
+        const groups = detail.groups?.length ? ` · групе: ${detail.groups.join(", ")}` : "";
+        return `${time} · ${detail.lecture_name || "Настава"} · ${detail.teacher || ""}${groups}`;
+    }
+    const username = detail.username ? ` · корисник: ${detail.username.split("@")[0]}` : "";
+    return `${time} · резервација: ${detail.description || "Без описа"}${username}`;
+}
+
+function mergeConflictDetails(details) {
+    const merged = [];
+    [...(details || [])]
+        .sort((a, b) => a.start - b.start || a.end - b.end)
+        .forEach((detail) => {
+            const previous = merged[merged.length - 1];
+            const sameReservation = detail.type === "reservation"
+                && previous?.type === "reservation"
+                && detail.description === previous.description
+                && detail.username === previous.username;
+            if (sameReservation && previous.end === detail.start) {
+                previous.end = detail.end;
+            } else {
+                merged.push({ ...detail });
+            }
+        });
+    return merged;
+}
+
+function showConflictDialog(details) {
+    let dialog = document.getElementById("occupancy-conflict-dialog");
+    if (!dialog) {
+        dialog = document.createElement("dialog");
+        dialog.id = "occupancy-conflict-dialog";
+        dialog.className = "occupancy-conflict-dialog";
+        document.body.appendChild(dialog);
+    }
+    dialog.replaceChildren();
+    const title = document.createElement("h2");
+    title.textContent = "Детаљи преклапања";
+    dialog.appendChild(title);
+    const explanation = document.createElement("p");
+    explanation.textContent = "Овај термин се преклапа са:";
+    dialog.appendChild(explanation);
+    const list = document.createElement("ul");
+    mergeConflictDetails(details).forEach((detail) => {
+        const item = document.createElement("li");
+        item.textContent = formatConflictEvent(detail);
+        list.appendChild(item);
+    });
+    dialog.appendChild(list);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "occupancy-conflict-dialog-close";
+    close.textContent = "Затвори";
+    close.addEventListener("click", () => dialog.close());
+    dialog.appendChild(close);
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "open");
+}
+
+function renderConflictIndicator(container, details) {
+    const indicator = document.createElement("button");
+    indicator.type = "button";
     indicator.className = "occupancy-conflict-indicator";
     indicator.textContent = "⚠";
     indicator.title = "Конфликт у термину";
     indicator.setAttribute("aria-label", "Конфликт у термину");
+    indicator.addEventListener("click", (event) => {
+        event.stopPropagation();
+        showConflictDialog(details);
+    });
     container.appendChild(indicator);
 }
 
@@ -134,7 +200,7 @@ export const CellRenderers = {
 
         if (cellData.conflict) {
             td.classList.add("occupancy-conflict");
-            renderConflictIndicator(left);
+            renderConflictIndicator(left, cellData.conflict_details);
         }
 
         // cancel button (if the user has permissions and the reservation is still cancelable)
@@ -189,7 +255,7 @@ export const CellRenderers = {
 
         if (cellData.conflict) {
             td.classList.add("occupancy-conflict");
-            renderConflictIndicator(left);
+            renderConflictIndicator(left, cellData.conflict_details);
         }
 
         // cancel/restore class button
